@@ -12,8 +12,8 @@ module commarray
   implicit none
   !
   real(8),allocatable,dimension(:,:,:,:) :: x,q,qrhs,vel,spc,dtmp,     &
-                                            dgrid,vor
-  real(8),allocatable,dimension(:,:,:) :: jacob,rho,prs,tmp
+                                            dgrid,vor,dvor
+  real(8),allocatable,dimension(:,:,:) :: jacob,rho,prs,tmp,vorbis
   real(8),allocatable,dimension(:,:,:,:,:) :: dxi,dvel,dspc
   real(8),allocatable,dimension(:,:,:) :: bnorm_i0,bnorm_im,bnorm_j0,  &
                                           bnorm_jm,bnorm_k0,bnorm_km
@@ -98,13 +98,17 @@ module commarray
     if(lallo.ne.0) stop ' !! error at allocating dvel'
     !
     allocate(dspc(0:im,0:jm,0:km,1:num_species,1:3),stat=lallo)
-    if(lallo.ne.0) stop ' !! error at allocating dvel'
+    if(lallo.ne.0) stop ' !! error at allocating dspc'
     !
     allocate(dtmp(0:im,0:jm,0:km,1:3),stat=lallo)
-    if(lallo.ne.0) stop ' !! error at allocating dvel'
+    if(lallo.ne.0) stop ' !! error at allocating dtmp'
     !
     allocate(vor(0:im,0:jm,0:km,1:3),stat=lallo)
     if(lallo.ne.0) stop ' !! error at allocating vor'
+    !
+    allocate(vorbis(-hm:im+hm,-hm:jm+hm,-hm:km+hm))
+    allocate(dvor(0:im,0:jm,0:km,1:3),stat=lallo)
+    if(lallo.ne.0) stop ' !! error at allocating dvor'
     !
     allocate(lsolid(-hm:im+hm,-hm:jm+hm,-hm:km+hm),stat=lallo)
     if(lallo.ne.0) stop ' !! error at allocating lsolid'

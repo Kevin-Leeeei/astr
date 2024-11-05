@@ -182,10 +182,11 @@ module userdefine
     !
     use constdef
     use commvar,  only : reynolds,lrestart,mach,ia,ja,ka,im,jm,km
-    use commarray,only : vel,rho,tmp,dvel,q
+    use commarray,only : vel,rho,tmp,dvel,q,vorbis,dvor
     use fludyna,  only : miucal,sos
+    use comsolver,only : solvrinit,grad
     use utility,  only : listinit,listwrite
-    use parallel, only : psum,lio,pmax,pmin
+    use parallel, only : dataswap,psum,lio,pmax,pmin
     use constdef, only : pi
     !
     integer :: i,j,k,ns
@@ -202,7 +203,7 @@ module userdefine
     real(8) :: dPsidPsidivU,dPhidPhidivU,divUdivUdivU,OmegaOmegadivU,traceSS,traceSSth,wsw,s3
     real(8) :: rsamples,miudrho,dudx2,csavg,v2,cs,ufluc,ens,omegaz,omegax,omegay
     real(8) :: rhoavg,rho2nd,w2drho
-    real(8) :: urms,energy,taylorlength,kolmoglength,Retaylor,machrms,macht,rhoe,skewness,du2,du3
+    real(8) :: urms,energy,taylorlength,kolmoglength,Retaylor,machrms,macht,rhoe,skewness,du2,du3,ReL
     real(8) :: mfpath,R ! mfpath = mean free path
     !
     logical :: fex
@@ -210,13 +211,14 @@ module userdefine
     integer,save :: hand_fs,hand_mom2nd,hand_mom3rd,hand_skew,hand_en
     !
     if(ka==0) then 
+      ! 2D part
       R = 8.31446261815324d0
       !
       if(linit) then
         !
         if(lio) then
-          call listinit(filename='log/fturbstats.dat',handle=hand_fs, &
-             firstline='nstep time urms ens talen kolmavg kolmloc Reta comlen mfpath machrms macht Tavg hsource skewness')
+          call listinit(filename='log/fturbstats2d.dat',handle=hand_fs, &
+             firstline='nstep time urms ens talen 2Dkolm kolmloc Rel ReL Ensdis mfpath machrms macht Tavg skewness')
           call listinit(filename='log/mom2nd.dat',handle=hand_mom2nd, &
                         firstline='nstep time m11m11 m22m22 m11m22 m12m21 m12m12 m21m21')
           call listinit(filename='log/mom3rd.dat',handle=hand_mom3rd, &
@@ -286,7 +288,18 @@ module userdefine
       w2drho=0.d0
       !
       k=0
-      ! do k=1,km
+      do j=0,jm
+      do i=0,im
+        vorbis(i,j,k)=dvel(i,j,k,2,1)-dvel(i,j,k,1,2)
+      enddo
+      enddo
+      !
+      call dataswap(vorbis)
+      !
+      !
+      dvor=grad(vorbis)
+      !
+      k=0
       do j=1,jm
       do i=1,im
         !
@@ -301,31 +314,27 @@ module userdefine
         !
         s11=du11
         s12=0.5d0*(du12+du21)
-        !s13=0.5d0*(dvel(i,j,k,1,3)+dvel(i,j,k,3,1))
         s22=du22
-        !s23=0.5d0*(dvel(i,j,k,2,3)+dvel(i,j,k,3,2))
-        !s33=dvel(i,j,k,3,3)
         !
         div=du11+du22
         !
-        !omegax=dvel(i,j,k,3,2)-dvel(i,j,k,2,3)
-        !omegay=dvel(i,j,k,1,3)-dvel(i,j,k,3,1)
         omegaz=du21-du12
         !
         dPsi = du12+du21
         dPhi = du11-du22
         !
-        v2=vel(i,j,k,1)**2+vel(i,j,k,2)**2+vel(i,j,k,3)**2
+        v2=vel(i,j,k,1)**2+vel(i,j,k,2)**2
         !
         cs=sos(tmp(i,j,k))
         !
         ! Volume average values 
         !
-        urms=urms+v2
-        energy = energy + 0.5d0*rho(i,j,k)*v2 !
+        urms = urms+v2
+        energy = energy + 0.5d0*rho(i,j,k)*v2
+        ens = ens + 0.5d0*(omegaz*omegaz)
         !
         divU = divU+div
-        comlen = min(comlen,sqrt(2.d0*4.d0/3.d0*miu/rho(i,j,k)/abs(div)))
+        comlen = min(comlen,sqrt(miu/rho(i,j,k)/abs(div)))
         Omega = Omega + omegaz
         Psi = Psi + dPsi
         Phi = Phi + dPhi
@@ -369,12 +378,12 @@ module userdefine
         !
         rhoe=rhoe+tmp(i,j,k)
         !
-        dissa=dissa+2.d0*miu/rho(i,j,k)*(s11**2+s22**2+2.d0*(s12**2)-0.5d0*div**2)
-        !
+        ! This is the enstrophy dissipation!
+        dissa = dissa+miu/rho(i,j,k)*(dvor(i,j,k,1)**2+dvor(i,j,k,2)**2)
+        ! This is the energy dissipation!
         dissloc = 2.d0*miu/rho(i,j,k)*(s11**2+s22**2+2.d0*(s12**2)-0.5d0*div**2)
         kolmloc = min(kolmloc,sqrt(sqrt((miu/rho(i,j,k))**3/dissloc)))
         !
-        ens=ens+(omegaz*omegaz)
         !
         du3=du3+(du11*du11*du11+du22*du22*du22)
         du2=du2+(du11*du11+du22*du22)
@@ -387,9 +396,10 @@ module userdefine
         !
       enddo
       enddo
-      ! enddo
-      urms  = sqrt(psum(urms)/rsamples)
-      energy  = psum(energy)/rsamples
+      !
+      urms= sqrt(psum(urms)/rsamples)
+      energy= psum(energy)/rsamples
+      ens=psum(ens)/rsamples
       !
       divU  = psum(divU)/rsamples
       Omega  = psum(Omega)/rsamples
@@ -434,14 +444,13 @@ module userdefine
       !
       rhoe=psum(rhoe)/rsamples
       !
-      ens=0.5d0*psum(ens)/rsamples
-      !
       ufluc=urms/sqrt(2.d0)
       !
-      macht         = urms/csavg!wrong
-      taylorlength  = ufluc/sqrt(dudx2)
-      retaylor      = ufluc*taylorlength/miudrho
-      kolmoglength  = sqrt(sqrt(miudrho**3/dissa))
+      macht         = urms/csavg
+      taylorlength  = sqrt(miudrho*ens/dissa) ! enstrophy based
+      retaylor      = ens**(3.d0/2.d0)/dissa ! enstrophy based
+      ReL           = energy/(miudrho*(dissa**(1.d0/3.d0))) ! enstrophy based
+      kolmoglength  = (miudrho**3/dissa)**(1.d0/6.d0)
       kolmloc       = pmin(kolmloc)
       comlen        = pmin(comlen) ! Compressible length
       mfpath        = pmax(mfpath)
@@ -455,8 +464,8 @@ module userdefine
       !
       if(lio) then 
         call listwrite(hand_fs,urms,ens,taylorlength,kolmoglength, &
-                        kolmloc, Retaylor,comlen,mfpath,machrms, &
-                        macht, rhoe,hsource,skewness)
+                        kolmloc, Retaylor,ReL,dissa,mfpath,machrms, &
+                        macht, rhoe,skewness)
         call listwrite(hand_mom2nd,m11m11,m22m22,m11m22,m12m21,m12m12,m21m21)
         call listwrite(hand_mom3rd,m11m11m11,m22m22m22,m11m11m22,m22m22m11,&
                       m11m12m12,m22m12m12,m11m21m21,m22m21m21,m22m21m12,m11m12m21)
@@ -466,6 +475,7 @@ module userdefine
         call listwrite(hand_en,rhoavg,rho2nd,w2drho)
       endif
     else
+      ! 3D part
       R = 8.31446261815324d0
       !
       if(linit) then
