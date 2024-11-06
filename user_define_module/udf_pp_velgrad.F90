@@ -283,7 +283,6 @@ module udf_pp_velgrad       !
       subroutine instantvortex2D(thefilenumb)
         !
         use, intrinsic :: iso_c_binding
-        use singleton
         use readwrite, only : readinput
         use commvar,only : time,nstep,im,jm,km,hm,ia,ja,ka,reynolds
         use commarray, only : x,vel,dvel,vorbis,dvor,rho,tmp
