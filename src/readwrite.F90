@@ -988,15 +988,16 @@ module readwrite
   !
   subroutine readic
     !
-    use commvar, only: ickmax,forcek,icamplitude,lforce,forceamp,numftheta,&
-                      icsolenoidal,icdilatational,forcekT
+    use commvar,   only: ickmax,icamplitude,icsolenoidal,icdilatational,lforce,&
+                      forcenum,hypervisk,hypervismiu
+    use commarray, only: forcek,forcespes,forcesped
     use parallel,only: bcast
     !
     ! local data
     character(len=64) :: inputfile
-    integer :: fh
+    integer :: fh,i
     !
-    inputfile='datin/ic'
+    inputfile='./datin/ic'
     !
     if(mpirank==0) then
       !
@@ -1008,21 +1009,53 @@ module readwrite
       read(fh,'(/)')
       read(fh,*)lforce
       read(fh,'(/)')
-      read(fh,*)forcek,forceamp,numftheta,forcekT
-      close(fh)
-      print*,' >> ',trim(inputfile),' ... done'
-      !
     endif
-    !
     call bcast(ickmax)
     call bcast(icamplitude)
     call bcast(icsolenoidal)
     call bcast(icdilatational)
     call bcast(lforce)
-    call bcast(forcek)
-    call bcast(forceamp)
-    call bcast(numftheta)
-    call bcast(forcekT)
+    !
+    if(lforce)then
+      if(mpirank==0)then
+        read(fh,*)hypervisk,hypervismiu
+        read(fh,'(/)')
+        read(fh,*)forcenum
+        read(fh,'(/)')
+      endif
+      call bcast(hypervisk)
+      call bcast(hypervismiu)
+      call bcast(forcenum)
+      !
+      allocate(forcek(1:forcenum),forcespes(1:forcenum),forcesped(1:forcenum))
+      !
+      do i=1,forcenum
+        if(mpirank==0)then
+          read(fh,*)forcek(i),forcespes(i),forcesped(i)
+        endif
+        call bcast(forcek(i))
+        call bcast(forcespes(i))
+        call bcast(forcesped(i))
+      enddo
+    endif
+    !
+    if(mpirank==0)then
+      close(fh)
+      print *,' >> ',trim(inputfile),' ... done'
+      !
+      print *, "  ** Initial field:"
+      print *, "     kmax = ", ickmax, "with amplitude:",icamplitude,". Ratio S=",icsolenoidal,"D=",icdilatational
+      if(lforce)then
+        print*,"  ** Force activated!"
+        print*,"     hypervisk = ",hypervisk,"hypervismiu = ",hypervismiu
+        print*,"     fixing energy at ",forcenum,"wavenumbers:"
+        do i=1,forcenum
+          print*,i,") k= ", forcek(i), 'with Es = ', forcespes(i), 'and Ed=', forcesped(i)
+        enddo
+      endif
+      !
+    endif
+    !
     !
   end subroutine readic
   !+-------------------------------------------------------------------+

@@ -12,6 +12,7 @@ module udf_pp_velgrad       !
     !
     use constdef
     use stlaio,  only: get_unit
+    use udf_tool
     !
     implicit none
     !
@@ -111,24 +112,16 @@ module udf_pp_velgrad       !
         call readinput
         !
         call mpisizedis
-        if(mpirank==0)then
-          print*, '** mpisizedis done!'
-        endif
+        if(mpirank==0) print*, '** mpisizedis done!'
         !
         call parapp
-        if(mpirank==0)then
-          print*, '** parapp done!'
-        endif
+        if(mpirank==0) print*, '** parapp done!'
         !
         call parallelini
-        if(mpirank==0)then
-          print*, '** parallelini done!'
-        endif
+        if(mpirank==0) print*, '** parallelini done!'
         !
         call refcal
-        if(mpirank==0)then
-          print*, '** refcal done!'
-        endif
+        if(mpirank==0) print*, '** refcal done!'
         !
         modeio='h'
         !
@@ -173,17 +166,13 @@ module udf_pp_velgrad       !
         !
         call h5io_end
         !
-        if(mpirank==0)then
-          print *, "Swap velocity"
-        endif
+        if(mpirank==0) print *, "Swap velocity"
         !
         call dataswap(vel)
         !
         call solvrinit
         !
-        if(mpirank==0)then
-          print *, "Calculate gradient"
-        endif
+        if(mpirank==0) print *, "Calculate gradient"
         !
         dvel(:,:,:,1,:)=grad(vel(:,:,:,1))
         dvel(:,:,:,2,:)=grad(vel(:,:,:,2))
@@ -311,31 +300,22 @@ module udf_pp_velgrad       !
         !
         call readinput
         !
+        call refcal
+        if(mpirank==0) print*, '** refcal done!'
+        !
         call mpisizedis_fftw
-        if(mpirank==0)then
-          print*, '** mpisizedis_fftw done!'
-        endif
+        if(mpirank==0) print*, '** mpisizedis_fftw done!'
         !
         call parapp
-        if(mpirank==0)then
-          print*, '** parapp done!'
-        endif
+        if(mpirank==0) print*, '** parapp done!'
         !
         call parallelini
-        if(mpirank==0)then
-          print*, '** parallelini done!'
-        endif
-        !
-        call refcal
-        if(mpirank==0)then
-          print*, '** refcal done!'
-        endif
+        if(mpirank==0) print*, '** parallelini done!'
         !
         modeio='h'
         !
-        if(mpirank==0)then
-          print *,"2D, ia:",ia,",ja:",ja
-        endif
+        if(mpirank==0) print *,"2D, ia:",ia,",ja:",ja
+        !
         allkmax=ceiling(sqrt(2.d0)/3*min(ia,ja))
         !
         allocate(x(-hm:im+hm,-hm:jm+hm,-hm:km+hm,1:3) )
@@ -369,17 +349,13 @@ module udf_pp_velgrad       !
         !
         call h5io_end
         !
-        if(mpirank==0)then
-          print *, "Swap velocity"
-        endif
+        if(mpirank==0) print *, "Swap velocity"
         !
         call dataswap(vel)
         !
         call solvrinit
         !
-        if(mpirank==0)then
-          print *, "Calculate gradient"
-        endif
+        if(mpirank==0) print *, "Calculate gradient"
         !
         dvel(0:im,0:jm,0:km,1,:)=grad(vel(:,:,:,1))
         dvel(0:im,0:jm,0:km,2,:)=grad(vel(:,:,:,2))
@@ -399,31 +375,7 @@ module udf_pp_velgrad       !
         !
         !! wavenumber
         allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-        do j = 1,jm
-        do i = 1,im
-          !
-          if(im .ne. ia)then
-            stop "error! im /= ia"
-          endif
-          !
-          if(i <= (ia/2+1)) then
-            k1(i,j) = real(i-1,8)
-          else if(i<=(ia)) then
-            k1(i,j) = real(i-ia-1,8)
-          else
-            print *,"Error, no wave number possible, i must smaller than ia-1 !"
-          end if
-          !
-          if((j+j0) <= (ja/2+1)) then
-            k2(i,j) = real(j+j0-1,8)
-          else if((j+j0)<=(ja)) then
-            k2(i,j) = real(j+j0-ja-1,8)
-          else
-            print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-          end if
-          !
-        end do
-        end do
+        call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
         !
         !! Imaginary number prepare
         imag = CMPLX(0.d0,1.d0,8)
@@ -546,24 +498,16 @@ module udf_pp_velgrad       !
         call readinput
         !
         call mpisizedis
-        if(mpirank==0)then
-          print*, '** mpisizedis done!'
-        endif
+        if(mpirank==0) print*, '** mpisizedis done!'
         !
         call parapp
-        if(mpirank==0)then
-          print*, '** parapp done!'
-        endif
+        if(mpirank==0) print*, '** parapp done!'
         !
         call parallelini
-        if(mpirank==0)then
-          print*, '** parallelini done!'
-        endif
+        if(mpirank==0) print*, '** parallelini done!'
         !
         call refcal
-        if(mpirank==0)then
-          print*, '** refcal done!'
-        endif
+        if(mpirank==0) print*, '** refcal done!'
         !
         modeio='h'
         !
@@ -612,17 +556,13 @@ module udf_pp_velgrad       !
         !
         call h5io_end
         !
-        if(mpirank==0)then
-          print *, "Swap velocity"
-        endif
+        if(mpirank==0) print *, "Swap velocity"
         !
         call dataswap(vel)
         !
         call solvrinit
         !
-        if(mpirank==0)then
-          print *, "Calculate gradient"
-        endif
+        if(mpirank==0)print *, "Calculate gradient"
         !
         dvel(:,:,:,1,:)=grad(vel(:,:,:,1))
         dvel(:,:,:,2,:)=grad(vel(:,:,:,2))

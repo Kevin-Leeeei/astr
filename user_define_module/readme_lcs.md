@@ -12,9 +12,9 @@ example: `mpirun  -np 16 $ASTR_DIR/astr pp hitgen 2Dherring ./datin/input.2d`
 The user-defined-pp is separated for 4 principal modules.
 ### Modules and submodules
 1. [`spectra`](./udf_pp_spectra.F90): spectrum-related calculation
-    - `instant3D` or `instant2D` or `instant3Davg` or `instant2Davg`: calculation of velocity spectrum $E^s(k)$ and $E^c(k)$ for solenoidal(incompressible) and dilational(compressible) kinetic energy of one snapshot. `$PARAMETER`: output file step. 
+    - `instant3D` or `instant2D` : calculation of velocity spectrum $E^s(k)$ and $E^c(k)$ for solenoidal(incompressible) and dilational(compressible) kinetic energy of one snapshot. `$PARAMETER1`: output file step. `$PARAMETER2`: spectral calculation method, basing on [[1]](#ref1), method 2 is recommended. (Method 1/2: $\langle E(\boldsymbol{k}) \rangle_{|\boldsymbol{k}| \in S_k} 2 \pi k$ or $\langle E(\boldsymbol{k}) \rangle_{|\boldsymbol{k}| \in S_k} 4 \pi k^2$,  Method 3: $\sum_{|\boldsymbol{k}| \in S_k} E(\boldsymbol{k})$. Method 1: $S_{log,k}$, Method 2/3: $S_{k}$)
     - `skewness2D`: skewness factor calculation using kinetic energy spectrum. `$PARAMETER`: output file step. 
-    - `triad3D` or `triad2D` or `triad3Davg` or `triad2Davg`: calculation of kinetic energy transfer spectrum (of triads) $T^{\bullet}(k)$. `$PARAMETER`: output file step. 
+    - `triad3D` or `triad2D` : calculation of kinetic energy transfer spectrum (of triads) $T^{\bullet}(k)$. `$PARAMETER1`: output file step. `$PARAMETER2`: spectral calculation method, same as `instant3D`.
     - `initparam3D` or `initparam2D`: calculation of initial field parameter(initial integral length, large-eddy-turnover time *etc.*) using spectral method. No `$PARAMETER`. 
 2. [`SGS`](./udf_pp_SGS.F90): energy transfer calculation in physical space
     The calculation of this part requires a [`datin/SGSinput`](#datinsgsinput-explanation)
@@ -55,3 +55,6 @@ The file should be like following: parameter details cf. [./udf_pp_SGS.F90](./ud
 # loutput
 t
 ```
+
+## Reference
+[1] <span id="ref1">[Stepanov, Rodion, et al. "Systematic bias in the calculation of spectral density from a three-dimensional spatial grid." Physical Review E 90.5 (2014): 053309.](https://doi.org/10.1103/PhysRevE.90.053309)</span>

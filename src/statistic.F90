@@ -473,7 +473,7 @@ module statistic
     if(linit) then
       !
       if(lio) then
-        call listinit(filename='turbstats.dat',handle=hand_fs, &
+        call listinit(filename='log/turbstats.dat',handle=hand_fs, &
                           firstline='nstep time urms taylorlength kolmoglength Retaylor machrms macht roE')
       endif
       !
@@ -481,76 +481,145 @@ module statistic
       !
     endif
     !
-    rsamples=dble(ia*ja*ka)
-    !
-    stas%urms=0.d0
-    stas%machrms=0.d0
-    !
-    miudrho=0.d0
-    dudx2=0.d0
-    csavg=0.d0
-    dissa=0.d0
-    do k=1,km
-    do j=1,jm
-    do i=1,im
+    if(ka == 0) then
+      rsamples=dble(ia*ja)
       !
-      if(nondimen) then
-        miu=miucal(tmp(i,j,k))/Reynolds
-      else
-        miu=miucal(tmp(i,j,k))
-      endif
+      stas%urms=0.d0
+      stas%machrms=0.d0
       !
-      s11=dvel(i,j,k,1,1)
-      s12=0.5d0*(dvel(i,j,k,1,2)+dvel(i,j,k,2,1))
-      s13=0.5d0*(dvel(i,j,k,1,3)+dvel(i,j,k,3,1))
-      s22=dvel(i,j,k,2,2)
-      s23=0.5d0*(dvel(i,j,k,2,3)+dvel(i,j,k,3,2))
-      s33=dvel(i,j,k,3,3)
+      miudrho=0.d0
+      dudx2=0.d0
+      csavg=0.d0
+      dissa=0.d0
+      k = 0
+      do j=1,jm
+      do i=1,im
+        !
+        if(nondimen) then
+          miu=miucal(tmp(i,j,k))/Reynolds
+        else
+          miu=miucal(tmp(i,j,k))
+        endif
+        !
+        s11=dvel(i,j,k,1,1)
+        s12=0.5d0*(dvel(i,j,k,1,2)+dvel(i,j,k,2,1))
+        s22=dvel(i,j,k,2,2)
+        !
+        ! div=s11+s22+s33
+        !
+        v2=vel(i,j,k,1)**2+vel(i,j,k,2)**2
+        !
+        cs=sos(tmp(i,j,k))
+        !
+        stas%urms=stas%urms+v2
+        !
+        dudx2=dudx2+s11**2+s22**2
+        !
+        miudrho=miudrho+miu/rho(i,j,k)
+        !
+        csavg=csavg+cs
+        !
+        stas%machrms=stas%machrms+v2/(cs*cs)
+        !
+        stas%rhoe=stas%rhoe+q(i,j,k,5)
+        !
+        dissa=dissa+2.d0*miu*(s11**2+s22**2+2.d0*s12**2-num1d3*div**2)
+        !
+      enddo
+      enddo
+      stas%urms  = sqrt(psum(stas%urms)/rsamples)
+      dudx2      = num1d3*psum(dudx2)/rsamples
+      miudrho    = psum(miudrho)/rsamples
+      csavg      = psum(csavg)/rsamples
+      dissa      = psum(dissa)/rsamples
       !
-      ! div=s11+s22+s33
+      stas%machrms=sqrt(psum(stas%machrms)/rsamples)
       !
-      v2=vel(i,j,k,1)**2+vel(i,j,k,2)**2+vel(i,j,k,3)**2
+      stas%rhoe=psum(stas%rhoe)/rsamples
       !
-      cs=sos(tmp(i,j,k))
+      ufluc=stas%urms/sqrt(2.d0)
       !
-      stas%urms=stas%urms+v2
+      stas%macht         = stas%urms/csavg
+      stas%taylorlength  = ufluc/sqrt(dudx2)
+      stas%retaylor      = ufluc*stas%taylorlength/miudrho
+      stas%kolmoglength  = sqrt(sqrt(miudrho**3/dissa))
+      ! stas%kolmogvelocity= sqrt(sqrt(dissipation*miudrho))
+      ! stas%kolmogtime    = sqrt(miudrho/dissipation)
       !
-      dudx2=dudx2+s11**2+s22**2+s33**2
+      if(lio) call listwrite(hand_fs,stas%urms,stas%taylorlength,       &
+                  stas%kolmoglength,stas%Retaylor,stas%machrms,stas%macht,stas%rhoe)
+    else
+      rsamples=dble(ia*ja*ka)
       !
-      miudrho=miudrho+miu/rho(i,j,k)
+      stas%urms=0.d0
+      stas%machrms=0.d0
       !
-      csavg=csavg+cs
+      miudrho=0.d0
+      dudx2=0.d0
+      csavg=0.d0
+      dissa=0.d0
+      do k=1,km
+      do j=1,jm
+      do i=1,im
+        !
+        if(nondimen) then
+          miu=miucal(tmp(i,j,k))/Reynolds
+        else
+          miu=miucal(tmp(i,j,k))
+        endif
+        !
+        s11=dvel(i,j,k,1,1)
+        s12=0.5d0*(dvel(i,j,k,1,2)+dvel(i,j,k,2,1))
+        s13=0.5d0*(dvel(i,j,k,1,3)+dvel(i,j,k,3,1))
+        s22=dvel(i,j,k,2,2)
+        s23=0.5d0*(dvel(i,j,k,2,3)+dvel(i,j,k,3,2))
+        s33=dvel(i,j,k,3,3)
+        !
+        ! div=s11+s22+s33
+        !
+        v2=vel(i,j,k,1)**2+vel(i,j,k,2)**2+vel(i,j,k,3)**2
+        !
+        cs=sos(tmp(i,j,k))
+        !
+        stas%urms=stas%urms+v2
+        !
+        dudx2=dudx2+s11**2+s22**2+s33**2
+        !
+        miudrho=miudrho+miu/rho(i,j,k)
+        !
+        csavg=csavg+cs
+        !
+        stas%machrms=stas%machrms+v2/(cs*cs)
+        !
+        stas%rhoe=stas%rhoe+q(i,j,k,5)
+        !
+        dissa=dissa+2.d0*miu*(s11**2+s22**2+s33**2+2.d0*(s12**2+s13**2+s23**2)-num1d3*div**2)
+        !
+      enddo
+      enddo
+      enddo
+      stas%urms  = sqrt(psum(stas%urms)/rsamples)
+      dudx2      = num1d3*psum(dudx2)/rsamples
+      miudrho    = psum(miudrho)/rsamples
+      csavg      = psum(csavg)/rsamples
+      dissa      = psum(dissa)/rsamples
       !
-      stas%machrms=stas%machrms+v2/(cs*cs)
+      stas%machrms=sqrt(psum(stas%machrms)/rsamples)
       !
-      stas%rhoe=stas%rhoe+q(i,j,k,5)
+      stas%rhoe=psum(stas%rhoe)/rsamples
       !
-      dissa=dissa+2.d0*miu*(s11**2+s22**2+s33**2+2.d0*(s12**2+s13**2+s23**2)-num1d3*div**2)
+      ufluc=stas%urms/sqrt(3.d0)
       !
-    enddo
-    enddo
-    enddo
-    stas%urms  = sqrt(psum(stas%urms)/rsamples)
-    dudx2      = num1d3*psum(dudx2)/rsamples
-    miudrho    = psum(miudrho)/rsamples
-    csavg      = psum(csavg)/rsamples
-    dissa      = psum(dissa)/rsamples
-    !
-    stas%machrms=sqrt(psum(stas%machrms)/rsamples)
-    !
-    stas%rhoe=psum(stas%rhoe)/rsamples
-    !
-    ufluc=stas%urms/sqrt(3.d0)
-    !
-    stas%macht         = stas%urms/csavg
-    stas%taylorlength  = ufluc/sqrt(dudx2)
-    stas%retaylor      = ufluc*stas%taylorlength/miudrho
-    stas%kolmoglength  = sqrt(sqrt(miudrho**3/dissa))
-    ! stas%kolmogvelocity= sqrt(sqrt(dissipation*miudrho))
-    ! stas%kolmogtime    = sqrt(miudrho/dissipation)
-    !
-    if(lio) call listwrite(hand_fs,stas%urms,stas%taylorlength,       &
-                stas%kolmoglength,stas%Retaylor,stas%machrms,stas%macht,stas%rhoe)
+      stas%macht         = stas%urms/csavg
+      stas%taylorlength  = ufluc/sqrt(dudx2)
+      stas%retaylor      = ufluc*stas%taylorlength/miudrho
+      stas%kolmoglength  = sqrt(sqrt(miudrho**3/dissa))
+      ! stas%kolmogvelocity= sqrt(sqrt(dissipation*miudrho))
+      ! stas%kolmogtime    = sqrt(miudrho/dissipation)
+      !
+      if(lio) call listwrite(hand_fs,stas%urms,stas%taylorlength,       &
+                  stas%kolmoglength,stas%Retaylor,stas%machrms,stas%macht,stas%rhoe)
+    endif
     !
   end subroutine turbstats
   !+-------------------------------------------------------------------+

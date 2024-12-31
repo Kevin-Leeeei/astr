@@ -35,6 +35,7 @@ module pp
     use udf_pp_velgrad
     use udf_pp_spectra
     use udf_pp_hitgen
+    use udf_pp_force
     use parallel,        only : mpirank,bcast,mpisize,lio
     use commarray,       only : allocommarray
     !
@@ -146,6 +147,10 @@ module pp
     elseif(trim(cmd)=='velgradient') then
       !
       call ppVelgradentrance
+      !
+    elseif(trim(cmd)=='forcetest') then
+      !
+      call ppForceentrance
       !
     else
       stop ' !! pp command not defined. @ ppentrance'
@@ -344,24 +349,16 @@ module pp
     call readinput
     !
     call mpisizedis
-    if(mpirank==0)then
-      print*, '** mpisizedis done!'
-    endif
+    if(mpirank==0) print*, '** mpisizedis done!'
     !
     call parapp
-    if(mpirank==0)then
-      print*, '** parapp done!'
-    endif
+    if(mpirank==0) print*, '** parapp done!'
     !
     call parallelini
-    if(mpirank==0)then
-      print*, '** parallelini done!'
-    endif
+    if(mpirank==0) print*, '** parallelini done!'
     !
     call refcal
-    if(mpirank==0)then
-      print*, '** refcal done!'
-    endif
+    if(mpirank==0) print*, '** refcal done!'
     !
     modeio='h'
     !
@@ -506,9 +503,7 @@ module pp
       call h5write(varname='t', var=tmpn(0:im,0:jm,0),  dir='k')
       call h5io_end
       !
-      if(mpirank==0)then
-        print*,' <<< ', outfilename, '... done.'
-      endif
+      if(mpirank==0) print*,' <<< ', outfilename, '... done.'
       !
     else
       !! 3D case
@@ -586,9 +581,7 @@ module pp
       call h5write(varname='t', var=tmpn(0:im,0:jm,0:km), mode = modeio)
       call h5io_end
       !
-      if(mpirank==0)then
-        print*,' <<< ', outfilename, '... done.'
-      endif
+      if(mpirank==0) print*,' <<< ', outfilename, '... done.'
       !
     endif
     !
