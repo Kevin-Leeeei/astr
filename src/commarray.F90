@@ -11,7 +11,8 @@ module commarray
   !
   implicit none
   !
-  real(8),allocatable,dimension(:,:,:,:) :: x,q,qrhs,vel,spc,dtmp,dgrid,vor,dvor
+  real(8),allocatable,dimension(:,:,:,:) ::  x,q,qrhs,vel,spc,dtmp,     &
+                                            dgrid,vor,dvor
   real(8),allocatable,dimension(:,:,:) :: jacob,rho,prs,tmp,vorbis
   real(8),allocatable,dimension(:,:,:,:,:) :: dxi,dvel,dspc
   real(8),allocatable,dimension(:,:,:) :: bnorm_i0,bnorm_im,bnorm_j0,  &
