@@ -279,7 +279,6 @@ module mainloop
     use comsolver,only : filterq,spongefilter,filter2e
     use solver,   only : rhscal
     use bc,       only : boucon,immbody
-    use userdefine, only: udf_generate_Aphi
 #ifdef COMB
     use thermchem,only : imp_euler_ode,heatrate
     use fdnn
@@ -332,8 +331,6 @@ module mainloop
       firstcall=.false.
       !
     endif
-    !
-    call udf_generate_Aphi
     !
     do rkstep=1,3
       !
@@ -561,7 +558,6 @@ module mainloop
     use comsolver,only : filterq,spongefilter
     use solver,   only : rhscal
     use bc,       only : boucon,immbody
-    use userdefine, only: udf_generate_Aphi
     !
     !
     ! local data
@@ -590,8 +586,6 @@ module mainloop
     endif
     !
     allocate(qsave(0:im,0:jm,0:km,1:numq),rhsav(0:im,0:jm,0:km,1:numq))
-    !
-    call udf_generate_Aphi
     !
     do rkstep=1,4
       !

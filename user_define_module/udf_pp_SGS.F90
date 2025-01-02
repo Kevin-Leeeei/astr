@@ -12,6 +12,7 @@ module udf_pp_SGS
     !
     use constdef
     use stlaio,  only: get_unit
+    use udf_tool, only: GenerateWave
     !
     implicit none
     !
@@ -252,31 +253,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if((j+j0) <= (ja/2+1)) then
-          k2(i,j) = real(j+j0-1,8)
-        else if((j+j0)<=(ja)) then
-          k2(i,j) = real(j+j0-ja-1,8)
-        else
-          print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
+      call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -530,6 +507,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -564,6 +542,7 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
       !
       modeio='h'
       ! Initialization
@@ -674,31 +653,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if((j+j0) <= (ja/2+1)) then
-          k2(i,j) = real(j+j0-1,8)
-        else if((j+j0)<=(ja)) then
-          k2(i,j) = real(j+j0-ja-1,8)
-        else
-          print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
+      call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -888,6 +843,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -920,6 +876,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -1004,31 +962,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if((j+j0) <= (ja/2+1)) then
-          k2(i,j) = real(j+j0-1,8)
-        else if((j+j0)<=(ja)) then
-          k2(i,j) = real(j+j0-ja-1,8)
-        else
-          print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
+      call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -1240,6 +1174,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini, mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -1277,6 +1212,9 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
+      !
       !
       modeio='h'
       ! Initialization
@@ -1353,31 +1291,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if((j+j0) <= (ja/2+1)) then
-          k2(i,j) = real(j+j0-1,8)
-        else if((j+j0)<=(ja)) then
-          k2(i,j) = real(j+j0-ja-1,8)
-        else
-          print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
+      call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -1858,6 +1772,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -1904,6 +1819,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -2059,41 +1976,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -2355,6 +2238,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -2395,6 +2279,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -2492,41 +2378,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -2829,6 +2681,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -2866,6 +2719,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -2955,41 +2810,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -3228,6 +3049,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -3293,6 +3115,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -3382,41 +3206,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)
@@ -4166,9 +3956,7 @@ module udf_pp_SGS
         Pi6(m) =	 psum(Pi6(m)) / (ia*ja*ka)
         Pi7(m) =	 psum(Pi7(m)) / (ia*ja*ka)
         !
-        if(mpirank==0)then
-          print *, '>>>>', outfilename2
-        endif
+        if(mpirank==0) print *, '>>>>', outfilename2
         !
         call mpi_barrier(mpi_comm_world,ierr)
         !
@@ -4277,6 +4065,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -4320,6 +4109,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -4362,31 +4153,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if((j+j0) <= (ja/2+1)) then
-          k2(i,j) = real(j+j0-1,8)
-        else if((j+j0)<=(ja)) then
-          k2(i,j) = real(j+j0-ja-1,8)
-        else
-          print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
+      call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
       !
       allocate(tau(1:2,1:2,1:im,1:jm),tau_bis(1:2,1:2,1:im,1:jm))
       !
@@ -4847,6 +4614,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -4905,6 +4673,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -4948,41 +4718,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       allocate(tau(1:3,1:3,1:im,1:jm,1:km),tau_bis(1:3,1:3,1:im,1:jm,1:km))
       !
@@ -5601,6 +5337,7 @@ module udf_pp_SGS
       use hdf5io
       use utility,  only : listinit,listwrite
       use parallel, only : bcast, pmax, pmin, psum, lio, parallelini,mpistop
+      use solver, only: refcal
       include 'fftw3-mpi.f03'
       !
       integer,intent(in) :: thefilenumb
@@ -5647,6 +5384,8 @@ module udf_pp_SGS
       logical :: loutput
       !
       call readinput
+      call refcal
+      if(mpirank==0)  print*, '** refcal done!'
       !
       modeio='h'
       ! Initialization
@@ -5742,41 +5481,7 @@ module udf_pp_SGS
       !
       !! wavenumber
       allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-      do k = 1,km
-      do j = 1,jm
-      do i = 1,im
-        !
-        if(im .ne. ia)then
-          stop "error! im /= ia"
-        endif
-        !
-        if(i <= (ia/2+1)) then
-          k1(i,j,k) = real(i-1,8)
-        else if(i<=(ia)) then
-          k1(i,j,k) = real(i-ia-1,8)
-        else
-          print *,"Error, no wave number possible, i must smaller than ia-1 !"
-        end if
-        !
-        if(j <= (ja/2+1)) then
-          k2(i,j,k) = real(j-1,8)
-        else if(i<=(ia)) then
-          k2(i,j,k) = real(j-ja-1,8)
-        else
-          print *,"Error, no wave number possible, j must smaller than ja-1 !"
-        end if
-        !
-        if((k+k0) <= (ka/2+1)) then
-          k3(i,j,k) = real(k+k0-1,8)
-        else if((k+k0)<=(ka)) then
-          k3(i,j,k) = real(k+k0-ka-1,8)
-        else
-          print *,"Error, no wave number possible, (k+k0) must smaller than ja-1 !"
-        end if
-        !
-      end do
-      end do
-      end do
+      call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
       !
       !! Imaginary number prepare
       imag = CMPLX(0.d0,1.d0,8)

@@ -12,28 +12,9 @@ module udf_pp_spectra
     !
     use constdef
     use stlaio,  only: get_unit
+    use udf_tool
     !
     implicit none
-    !
-    interface ProjectP2
-        module procedure ProjectP2_2D
-        module procedure ProjectP2_3D
-    end interface
-    !
-    interface ProjectP3
-        module procedure ProjectP3_2D
-        module procedure ProjectP3_3D
-    end interface
-    !
-    interface ProjectPi2
-        module procedure ProjectPi2_2D
-        module procedure ProjectPi2_3D
-    end interface
-    !
-    interface ProjectPi3
-        module procedure ProjectPi3_2D
-        module procedure ProjectPi3_3D
-    end interface
     !
     contains
     !
@@ -44,8 +25,8 @@ module udf_pp_spectra
         !
         ! local data
         character(len=64) :: casefolder,inputfile,outputfile,viewmode, &
-                             flowfieldfile, readmode
-        integer :: filenumb
+                             flowfieldfile, readmode, method
+        integer :: filenumb, methodnumb
         !
         !
         if(mpirank == 0) then
@@ -53,47 +34,35 @@ module udf_pp_spectra
         endif
         call bcast(readmode)
         !
-        if(trim(readmode)=='instant2Davg') then
+        if(trim(readmode)=='instant2D') then
           !
           if(mpirank == 0) then
               call readkeyboad(inputfile) 
               read(inputfile,'(i4)') filenumb
+              call readkeyboad(method)
+              read(method,'(i1)') methodnumb
           endif
           call bcast(filenumb)
-          call instantspectra2D(filenumb,avg=.true.)
-          !
-        elseif(trim(readmode)=='instant3Davg') then
-          !
-          if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
-          endif
-          call bcast(filenumb)
-          call instantspectra3D(filenumb,avg=.true.)
-          !
-        elseif(trim(readmode)=='instant2D') then
-          !
-          if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
-          endif
-          call bcast(filenumb)
-          call instantspectra2D(filenumb)
+          call bcast(methodnumb)
+          call instantspectra2D(filenumb,methodnumb)
           !
         elseif(trim(readmode)=='instant3D') then
           !
           if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
+            call readkeyboad(inputfile) 
+            read(inputfile,'(i4)') filenumb
+            call readkeyboad(method)
+            read(method,'(i1)') methodnumb
           endif
           call bcast(filenumb)
-          call instantspectra3D(filenumb)
+          call bcast(methodnumb)
+          call instantspectra3D(filenumb,methodnumb)
           !
         elseif(trim(readmode)=='skewness2D') then
           !
           if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
+            call readkeyboad(inputfile) 
+            read(inputfile,'(i4)') filenumb
           endif
           call bcast(filenumb)
           call instantspectraskewness2D(filenumb)
@@ -101,38 +70,26 @@ module udf_pp_spectra
         elseif(trim(readmode)=='triad2D') then
           !
           if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
+            call readkeyboad(inputfile) 
+            read(inputfile,'(i4)') filenumb
+            call readkeyboad(method)
+            read(method,'(i1)') methodnumb
           endif
           call bcast(filenumb)
-          call instanttriad2D(filenumb)
+          call bcast(methodnumb)
+          call instanttriad2D(filenumb,methodnumb)
           !
         elseif(trim(readmode)=='triad3D') then
           !
           if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
+            call readkeyboad(inputfile) 
+            read(inputfile,'(i4)') filenumb
+            call readkeyboad(method)
+            read(method,'(i1)') methodnumb
           endif
           call bcast(filenumb)
-          call instanttriad3D(filenumb)
-          !
-        elseif(trim(readmode)=='triad2Davg') then
-          !
-          if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
-          endif
-          call bcast(filenumb)
-          call instanttriad2D(filenumb,avg=.true.)
-          !
-        elseif(trim(readmode)=='triad3Davg') then
-          !
-          if(mpirank == 0) then
-              call readkeyboad(inputfile) 
-              read(inputfile,'(i4)') filenumb
-          endif
-          call bcast(filenumb)
-          call instanttriad3D(filenumb,avg=.true.)
+          call bcast(methodnumb)
+          call instanttriad3D(filenumb,methodnumb)
           !
         elseif(trim(readmode)=='initparam2D') then
           !
@@ -151,13 +108,13 @@ module udf_pp_spectra
   !
   !
   !
-  subroutine instantspectra2D(thefilenumb,avg)
+  subroutine instantspectra2D(thefilenumb,method)
     !
     !
     use, intrinsic :: iso_c_binding
     use readwrite, only : readinput
     use fftwlink
-    use commvar,only : time,nstep,im,jm,km,ia,ja,ka
+    use commvar,only : time,nstep,im,jm,km,ia,ja,ka,roinf
     use commarray, only: vel, rho, prs
     use hdf5io
     use solver,    only : refcal
@@ -167,37 +124,56 @@ module udf_pp_spectra
     !
     ! arguments
     integer,intent(in) :: thefilenumb
-    logical,intent(in),optional :: avg
+    integer,intent(in) :: method
     character(len=128) :: infilename
     character(len=4) :: stepname
     real(8) :: u1mean,u2mean,rhomean,prsmean
-    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: u1spe,u2spe,pspe
-    real(8), allocatable, dimension(:) :: ES,EC,Ecount,Eall,Puc
-    complex(8), allocatable, dimension(:,:) :: usspe,ucspe
-    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: u1c,u2c,u1s,u2s
+    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: u1spe,u2spe,pspe,rou1spe,rou2spe
+    real(8), allocatable, dimension(:) :: ES,ED,Ecount,Eweak,Pud,kn,Erho
+    complex(8), allocatable, dimension(:,:) :: usspe,udspe
+    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: u1d,u2d,u1s,u2s
     ! real(8), allocatable, dimension(:,:) :: usspeR,usspeI,ucspeR,ucspeI
-    real(8), allocatable, dimension(:,:) :: u1cR,u2cR,u1sR,u2sR,ucuc,ucus,usus,ReUsConjUd
+    real(8), allocatable, dimension(:,:) :: u1dR,u2dR,u1sR,u2sR,udud,udus,usus,ReUsConjUd
     real(8), allocatable, dimension(:,:) :: k1,k2
-    integer :: allkmax
-    real(8) :: k,dk !wave number
-    real(8) :: Ecspe,Esspe,Pucspe,Ecphy,Esphy,ucusphy,roav,Ecmax
-    real(8) :: ReUsConjUdmax,ReUsConjUdmin,k2Es,k2Ec,IntLengthAbove
+    integer :: allkmax, kOrdinal
+    real(8) :: kk,dk,lambda
+    real(8) :: Edspe,Esspe,Erhospe,Pudspe,Edphy,Esphy,Erhophy,udusphy,Edmax
+    real(8) :: ReUsConjUdmax,ReUsConjUdmin,k2Es,k2Ed,IntLengthAbove
     character(len=128) :: outfilename
-    integer :: hand_a,hand_b
+    integer :: hand_a,hand_b,hand_c
     character(len=1) :: modeio
     integer :: i,j,n
-    type(C_PTR) :: forward_plan, backward_plan, c_u1spe, c_u2spe, c_pspe, c_u1c, c_u2c, c_u1s, c_u2s
+    type(C_PTR) :: forward_plan, backward_plan, c_u1spe, c_u2spe, c_pspe, &
+     c_u1d, c_u2d, c_u1s, c_u2s, c_rou1spe, c_rou2spe
+    !
+    ! Initialization
+    if((method < 1 ) .or. (method >3))then
+      stop "Error! method @ instantspectra2D problem, not among 1, 2, 3"
+    else
+      if(mpirank==0) print *, "Using method", method
+    endif
     !
     call readinput
     !
+    call refcal
+    if(mpirank==0)  print*, '** refcal done!'
+    !
     modeio='h'
-    ! Initialization
+    !
+    if(ka .ne. 0) stop 'Please use instantspectra3D'
+    !
+    dk = 1.d0
+    if(method==1)then
+      lambda = 1.21d0
+      allkmax = ceiling(log(real(sqrt(2.d0)/3*min(ia,ja))/dk)/log(lambda))
+    elseif((method == 2) .or. (method==3))then
+      allkmax=ceiling(real(sqrt(2.d0)/3*min(ia,ja))/dk)
+    endif
+    !
+    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,"knumber:",allkmax
+    !
     call fftw_mpi_init()
     if(mpirank==0)  print *, "fftw_mpi initialized"
-    !
-    allkmax=ceiling(sqrt(2.d0)/3*min(ia,ja))
-    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,"allkmax:",allkmax
-    if(ka .ne. 0) stop 'Please use instantspectra3D'
     !
     call mpisizedis_fftw
     if(mpirank==0)  print*, '** mpisizedis & parapp done!'
@@ -205,8 +181,6 @@ module udf_pp_spectra
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
     !
-    call refcal
-    if(mpirank==0)  print*, '** refcal done!'
     !
     allocate(vel(0:im,0:jm,0:km,1:2), rho(0:im,0:jm,0:km), prs(0:im,0:jm,0:km))
     !
@@ -232,7 +206,7 @@ module udf_pp_spectra
     !
     call mpi_barrier(mpi_comm_world,ierr)
     !
-    if(mpirank==0)  print *, "Field read finish!"
+    if(mpirank==0)  print *, "** Field read finish!"
     !
     ! Calculate average
     u1mean = 0.0d0
@@ -241,18 +215,18 @@ module udf_pp_spectra
     prsmean = 0.0d0
     !
     do i=1,im
-      do j=1,jm
-        u1mean = u1mean + vel(i,j,0,1)
-        u2mean = u2mean + vel(i,j,0,2)
-        rhomean = rhomean + rho(i,j,0)
-        prsmean = prsmean + prs(i,j,0)
-      enddo
+    do j=1,jm
+      u1mean = u1mean + vel(i,j,0,1)
+      u2mean = u2mean + vel(i,j,0,2)
+      rhomean = rhomean + rho(i,j,0)
+      prsmean = prsmean + prs(i,j,0)
+    enddo
     enddo
     rhomean = psum(rhomean) / (1.0d0*ia*ja)
     u1mean = psum(u1mean) / (1.d0*ia*ja)
     u2mean = psum(u2mean) / (1.d0*ia*ja)
     prsmean = psum(prsmean) / (1.d0*ia*ja)
-    if(mpirank==0) print *, 'u1mean=',u1mean, 'u2mean=',u2mean, 'prsmean=',prsmean
+    !
     !
     c_u1spe = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u1spe, u1spe, [imfftw,jmfftw])
@@ -260,6 +234,10 @@ module udf_pp_spectra
     call c_f_pointer(c_u2spe, u2spe, [imfftw,jmfftw])
     c_pspe = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_pspe, pspe, [imfftw,jmfftw])
+    c_rou1spe = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_rou1spe, rou1spe, [imfftw,jmfftw])
+    c_rou2spe = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_rou2spe, rou2spe, [imfftw,jmfftw])
     !
     ! Planning
     forward_plan = fftw_mpi_plan_dft_2d(jafftw,iafftw, u1spe,u1spe, MPI_COMM_WORLD, FFTW_FORWARD, FFTW_MEASURE)
@@ -268,9 +246,11 @@ module udf_pp_spectra
     do j=1,jm
     do i=1,im
       !
-      u1spe(i,j)=CMPLX(vel(i,j,0,1)-u1mean,0.d0,C_INTPTR_T);
-      u2spe(i,j)=CMPLX(vel(i,j,0,2)-u2mean,0.d0,C_INTPTR_T);
-      pspe(i,j)=CMPLX(prs(i,j,0)-prsmean,0.d0,C_INTPTR_T);
+      u1spe(i,j)=CMPLX(vel(i,j,0,1),0.d0,C_INTPTR_T);
+      u2spe(i,j)=CMPLX(vel(i,j,0,2),0.d0,C_INTPTR_T);
+      pspe(i,j)=CMPLX(prs(i,j,0),0.d0,C_INTPTR_T);
+      rou1spe(i,j)=CMPLX((rho(i,j,0)-roinf)*vel(i,j,0,1),C_INTPTR_T)
+      rou2spe(i,j)=CMPLX((rho(i,j,0)-roinf)*vel(i,j,0,2),C_INTPTR_T)
       !
     end do
     end do
@@ -280,73 +260,53 @@ module udf_pp_spectra
     call fftw_mpi_execute_dft(forward_plan,u1spe,u1spe)
     call fftw_mpi_execute_dft(forward_plan,u2spe,u2spe)
     call fftw_mpi_execute_dft(forward_plan,pspe,pspe)
-
+    call fftw_mpi_execute_dft(forward_plan,rou1spe,rou1spe)
+    call fftw_mpi_execute_dft(forward_plan,rou2spe,rou2spe)
+    !
     do j=1,jm
     do i=1,im
       !
       u1spe(i,j)=u1spe(i,j)/(1.d0*ia*ja)
       u2spe(i,j)=u2spe(i,j)/(1.d0*ia*ja)
       pspe(i,j)=pspe(i,j)/(1.d0*ia*ja)
+      rou1spe(i,j)=rou1spe(i,j)/(1.d0*ia*ja)
+      rou2spe(i,j)=rou2spe(i,j)/(1.d0*ia*ja)
       !
     end do
     end do
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     !!!! Do S-C decomposition
-    allocate(usspe(1:im,1:jm),ucspe(1:im,1:jm))
-    c_u1c = fftw_alloc_complex(alloc_local)
-    call c_f_pointer(c_u1c, u1c, [imfftw,jmfftw])
-    c_u2c = fftw_alloc_complex(alloc_local)
-    call c_f_pointer(c_u2c, u2c, [imfftw,jmfftw])
+    allocate(usspe(1:im,1:jm),udspe(1:im,1:jm))
+    c_u1d = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_u1d, u1d, [imfftw,jmfftw])
+    c_u2d = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_u2d, u2d, [imfftw,jmfftw])
     c_u1s = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u1s, u1s, [imfftw,jmfftw])
     c_u2s = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u2s, u2s, [imfftw,jmfftw])
-    allocate(u1cR(1:im,1:jm),u2cR(1:im,1:jm),u1sR(1:im,1:jm),u2sR(1:im,1:jm),&
-            ucuc(1:im,1:jm),ucus(1:im,1:jm),usus(1:im,1:jm))
+    allocate(u1dR(1:im,1:jm),u2dR(1:im,1:jm),u1sR(1:im,1:jm),u2sR(1:im,1:jm),&
+            udud(1:im,1:jm),udus(1:im,1:jm),usus(1:im,1:jm))
     allocate(ReUsConjUd(1:im,1:jm))
     !
     ! 
     !
     do j=1,jm
     do i=1,im
-        k=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
-        usspe(i,j) = u1spe(i,j)*k2(i,j)/k - u2spe(i,j)*k1(i,j)/k
-        ucspe(i,j) = u1spe(i,j)*k1(i,j)/k + u2spe(i,j)*k2(i,j)/k
+        kk=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
+        usspe(i,j) = u1spe(i,j)*k2(i,j)/kk - u2spe(i,j)*k1(i,j)/kk
+        udspe(i,j) = u1spe(i,j)*k1(i,j)/kk + u2spe(i,j)*k2(i,j)/kk
         !
-        u1c(i,j)=  ucspe(i,j)*k1(i,j)/k 
-        u2c(i,j)=  ucspe(i,j)*k2(i,j)/k
-        u1s(i,j)=  usspe(i,j)*k2(i,j)/k 
-        u2s(i,j)= -usspe(i,j)*k1(i,j)/k
+        u1d(i,j)=  udspe(i,j)*k1(i,j)/kk
+        u2d(i,j)=  udspe(i,j)*k2(i,j)/kk
+        u1s(i,j)=  usspe(i,j)*k2(i,j)/kk 
+        u2s(i,j)= -usspe(i,j)*k1(i,j)/kk
         !
-        ReUsConjUd(i,j) = real(conjg(usspe(i,j))*ucspe(i,j))
+        ReUsConjUd(i,j) = real(conjg(usspe(i,j))*udspe(i,j))
         !
       end do
     end do
@@ -356,114 +316,130 @@ module udf_pp_spectra
     !
     !!!! Give S-C spectra and spectral energy
     !
-    dk = 0.5d0
-    allocate(ES(0:allkmax),EC(0:allkmax),Ecount(0:allkmax),Eall(0:allkmax),Puc(0:allkmax))
-    do i=0,allkmax
-      ES(i) = 0.0d0
-      EC(i) = 0.0d0
-      Ecount(i) = 0.0d0
-      Eall(i) = 0.0d0
-      Puc(i) = 0.0d0
-    end do
+    allocate(ES(0:allkmax),ED(0:allkmax),Erho(0:allkmax),Ecount(0:allkmax))
+    allocate(Eweak(0:allkmax),Pud(0:allkmax),kn(0:allkmax))
     !
-    Ecspe = 0.0d0
+    ES = 0.0d0
+    ED = 0.0d0
+    Ecount = 0.0d0
+    Eweak = 0.0d0
+    Erho = 0.0d0
+    Pud = 0.0d0
+    kn = 0.d0
+    Edspe = 0.0d0
     Esspe = 0.0d0
-    Pucspe = 0.0d0
+    Pudspe = 0.0d0
     k2Es = 0.d0
-    k2Ec = 0.d0
+    k2Ed = 0.d0
     !
     do j=1,jm
     do i=1,im
-        k=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
-        if (abs(k-nint(k))<=dk .and. kint(k,dk)<=allkmax) then
-          ES(kint(k,dk)) = ES(kint(k,dk)) + usspe(i,j)*conjg(usspe(i,j))/2
-          EC(kint(k,dk)) = EC(kint(k,dk)) + ucspe(i,j)*conjg(ucspe(i,j))/2
-          Eall(kint(k,dk)) = Eall(kint(k,dk)) + u1spe(i,j)*conjg(u1spe(i,j))/2 + &
-                              u2spe(i,j)*conjg(u2spe(i,j))/2
-          Puc(kint(k,dk)) = Puc(kint(k,dk)) + dimag(pspe(i,j)*dconjg(ucspe(i,j))*k)
-          Ecount(kint(k,dk)) = Ecount(kint(k,dk)) + 1
+        kk=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
+        kOrdinal = kint(kk,dk,method,lambda)
+        if (kOrdinal<=allkmax) then
+          Ecount(kOrdinal) = Ecount(kOrdinal) + 1
+          if((method == 1) .or. (method == 2))then
+            ES(kOrdinal) = ES(kOrdinal) + roinf * usspe(i,j)*conjg(usspe(i,j))*kk/2
+            ED(kOrdinal) = ED(kOrdinal) + roinf * udspe(i,j)*conjg(udspe(i,j))*kk/2
+            Eweak(kOrdinal) = Eweak(kOrdinal) + roinf * u1spe(i,j)*conjg(u1spe(i,j))*kk/2 + &
+                            roinf * u2spe(i,j)*conjg(u2spe(i,j))*kk/2
+            Pud(kOrdinal) = Pud(kOrdinal) - dimag(pspe(i,j)*dconjg(udspe(i,j))*kk)*kk
+            Erho(kOrdinal) = Erho(kOrdinal) + real(rou1spe(i,j)*conjg(u1spe(i,j))+ &
+                              rou2spe(i,j)*conjg(u2spe(i,j)))*kk/2
+            kn(kOrdinal) = kn(kOrdinal) + kk
+          elseif(method == 3)then
+            ES(kOrdinal) = ES(kOrdinal) + roinf * usspe(i,j)*conjg(usspe(i,j))/2
+            ED(kOrdinal) = ED(kOrdinal) + roinf * udspe(i,j)*conjg(udspe(i,j))/2
+            Eweak(kOrdinal) = Eweak(kOrdinal) + roinf * u1spe(i,j)*conjg(u1spe(i,j))/2 + &
+                              roinf * u2spe(i,j)*conjg(u2spe(i,j))/2
+            Pud(kOrdinal) = Pud(kOrdinal) - dimag(pspe(i,j)*dconjg(udspe(i,j))*kk)
+            Erho(kOrdinal) = Erho(kOrdinal) + real(rou1spe(i,j)*conjg(u1spe(i,j))+ &
+                              rou2spe(i,j)*conjg(u2spe(i,j)))/2
+          endif
         end if
-        Ecspe = Ecspe + (ucspe(i,j)*dconjg(ucspe(i,j)))/2
-        Esspe = Esspe + (usspe(i,j)*dconjg(usspe(i,j)))/2
-        IntLengthAbove = IntLengthAbove + usspe(i,j)*conjg(usspe(i,j))/2/k + &
-                        (ucspe(i,j)*dconjg(ucspe(i,j)))/2/k
-        Pucspe = Pucspe + dimag(pspe(i,j)*dconjg(ucspe(i,j))*k)/2
-        k2Es = k2Es + k**2 * (usspe(i,j)*dconjg(usspe(i,j)))/2
-        k2Ec = k2Ec + k**2 * (ucspe(i,j)*dconjg(ucspe(i,j)))/2
+        Edspe = Edspe + roinf * (udspe(i,j)*dconjg(udspe(i,j)))/2
+        Esspe = Esspe + roinf * (usspe(i,j)*dconjg(usspe(i,j)))/2
+        Erhospe = Erhospe + real(rou1spe(i,j)*conjg(u1spe(i,j))+ rou2spe(i,j)*conjg(u2spe(i,j)))/2
+        IntLengthAbove = IntLengthAbove + roinf * usspe(i,j)*conjg(usspe(i,j))/2/kk + &
+                        roinf * (udspe(i,j)*dconjg(udspe(i,j)))/2/kk
+        Pudspe = Pudspe + dimag(pspe(i,j)*dconjg(udspe(i,j))*kk)/2
+        k2Es = k2Es + kk**2 * (usspe(i,j)*dconjg(usspe(i,j)))/2
+        k2Ed = k2Ed + kk**2 * (udspe(i,j)*dconjg(udspe(i,j)))/2
       end do
     end do
     !
     do i=0,allkmax
       ES(i) = psum(ES(i))
-      EC(i) = psum(EC(i))
-      Eall(i) = psum(Eall(i))
+      ED(i) = psum(ED(i))
+      Eweak(i) = psum(Eweak(i))
+      Erho(i) = psum(Erho(i))
+      Pud(i) = psum(Pud(i))
       Ecount(i) = psum(Ecount(i))
-      Puc(i) = - psum(Puc(i))
+      if((method == 1) .or. (method == 2))then
+        kn(i) = psum(kn(i))
+        if(Ecount(i) .ne. 0)then
+          ES(i) = ES(i)/Ecount(i)*2*pi
+          ED(i) = ED(i)/Ecount(i)*2*pi
+          Eweak(i) = Eweak(i)/Ecount(i)*2*pi
+          Pud(i) = Pud(i)/Ecount(i)*2*pi
+          kn(i) = kn(i)/Ecount(i)
+          Erho(i) = Erho(i)/Ecount(i)*2*pi
+        endif
+      else
+        kn(i) = real(i)
+      endif
     end do
     !
-    call mpi_barrier(mpi_comm_world,ierr)
-    !
-    !
-    if(present(avg) .and. avg)then
-        do i=0,allkmax
-            if(Ecount(i) .ne. 0)then
-            ES(i) = ES(i)/Ecount(i)*pi
-            EC(i) = EC(i)/Ecount(i)*pi
-            Eall(i) = Eall(i)/Ecount(i)*pi
-            Puc(i) = Puc(i)/Ecount(i)*pi
-            endif
-        end do
-        if(mpirank==0)  print*, '** Do avgerage'
-    endif   
-    !
-    Ecspe = psum(Ecspe)
+    Edspe = psum(Edspe)
     Esspe = psum(Esspe)
-    Pucspe = psum(Pucspe)
+    Erhospe = psum(Erhospe)
+    Pudspe = psum(Pudspe)
     IntLengthAbove = psum(IntLengthAbove)
     k2Es = psum(k2Es)
-    k2Ec = psum(k2Ec)
+    k2Ed = psum(k2Ed)
     !
+    if(mpirank==0)  print*, '** Summation & average'
     if(mpirank==0)  print*, '** spectra calculation finish'
     !
     !!!! Do inverse FFT
     !
-    call fftw_mpi_execute_dft(backward_plan,u1c,u1c)
-    call fftw_mpi_execute_dft(backward_plan,u2c,u2c)
+    call fftw_mpi_execute_dft(backward_plan,u1d,u1d)
+    call fftw_mpi_execute_dft(backward_plan,u2d,u2d)
     call fftw_mpi_execute_dft(backward_plan,u1s,u1s)
     call fftw_mpi_execute_dft(backward_plan,u2s,u2s)
     !
     !!!! Give S-C physical energy
-    Ecphy = 0.0d0
+    Edphy = 0.0d0
     Esphy = 0.0d0
-    ucusphy = 0.0d0
-    roav = 0.0d0
-    Ecmax = 0.0d0
+    Erhophy = 0.0d0
+    udusphy = 0.0d0
+    Edmax = 0.0d0
     ReUsConjUdmax = -100.d0
     ReUsConjUdmin = 100.d0
     do j=1,jm
     do i=1,im
-        u1cR(i,j) = real(u1c(i,j))
-        u2cR(i,j) = real(u2c(i,j))
+        u1dR(i,j) = real(u1d(i,j))
+        u2dR(i,j) = real(u2d(i,j))
         u1sR(i,j) = real(u1s(i,j))
         u2sR(i,j) = real(u2s(i,j))
-        ucuc(i,j) = u1cR(i,j)*u1cR(i,j)+u2cR(i,j)*u2cR(i,j)
-        ucus(i,j) = u1cR(i,j)*u1sR(i,j)+u2cR(i,j)*u2sR(i,j)
+        udud(i,j) = u1dR(i,j)*u1dR(i,j)+u2dR(i,j)*u2dR(i,j)
+        udus(i,j) = u1dR(i,j)*u1sR(i,j)+u2dR(i,j)*u2sR(i,j)
         usus(i,j) = u1sR(i,j)*u1sR(i,j)+u2sR(i,j)*u2sR(i,j)
-        Ecmax = max(Ecmax,ucuc(i,j))
-        Ecphy = Ecphy + ucuc(i,j)
-        Esphy = Esphy + usus(i,j)
-        ucusphy = ucusphy + ucus(i,j)
-        roav = roav + rho(i,j,0)
+        Edmax = max(Edmax,udud(i,j))
+        Edphy = Edphy + roinf * udud(i,j) / 2.d0
+        Esphy = Esphy + roinf * usus(i,j) / 2.d0
+        Erhophy = Erhophy + (rho(i,j,0)-roinf)*(vel(i,j,0,1)**2 + vel(i,j,0,2)**2) / 2.d0
+        udusphy = udusphy + roinf * udus(i,j)
         ReUsConjUdmax = max(ReUsConjUdmax,ReUsConjUd(i,j))
         ReUsConjUdmin = min(ReUsConjUdmin,ReUsConjUd(i,j))
       end do
     end do
     !
-    roav = psum(roav)/(1.d0*ia*ja)
-    Ecphy = psum(Ecphy)/(2.d0*ia*ja)
-    Esphy = psum(Esphy)/(2.d0*ia*ja)
-    ucusphy = psum(ucusphy)/(1.d0*ia*ja)
-    Ecmax = pmax(Ecmax)
+    Edphy = psum(Edphy)/(1.d0*ia*ja)
+    Esphy = psum(Esphy)/(1.d0*ia*ja)
+    udusphy = psum(udusphy)/(1.d0*ia*ja)
+    Erhophy = psum(Erhophy)/(1.d0*ia*ja)
+    Edmax = pmax(Edmax)
     ReUsConjUdmax = pmax(ReUsConjUdmax)
     ReUsConjUdmin = pmin(ReUsConjUdmin)
     !
@@ -477,9 +453,9 @@ module udf_pp_spectra
       endif
       !
       call listinit(filename=outfilename,handle=hand_a, &
-                        firstline='nstep time k ES EC Eall Puc')
+                        firstline='nstep time k ES ED Eweak Erho Pud')
       do i=0,allkmax
-        call listwrite(hand_a,dble(i),ES(i),EC(i),Eall(i),Puc(i))
+        if(Ecount(i)>1e-3) call listwrite(hand_a,kn(i),ES(i),ED(i),Eweak(i),Erho(i),Pud(i))
       end do
       !
       print*,' <<< '//outfilename//'... done.'
@@ -491,21 +467,32 @@ module udf_pp_spectra
       endif
       !
       call listinit(filename=outfilename,handle=hand_b, &
-            firstline='nstep time Ecphy Esphy ucusphy Ephyall Ecspe Esspe Pucspe Espeall Ecmax k2Es k2Ec IntLen')
-      call listwrite(hand_b,Ecphy,Esphy,ucusphy,Ecphy+Esphy+ucusphy&
-                    ,Ecspe,Esspe,Pucspe,Ecspe+Esspe,Ecmax,k2Es,k2Ec,IntLengthAbove/(Ecspe+Esspe))
+            firstline='nstep time Edphy Esphy udusphy Eweakphy Erhophy Edspe Esspe Pudspe Eweakspe Erhospe Edmax k2Es k2Ed')! IntLen')
+      call listwrite(hand_b,Edphy,Esphy,udusphy,Edphy+Esphy+udusphy,Erhophy,&
+                    Edspe,Esspe,Pudspe,Edspe+Esspe,Erhospe,Edmax,k2Es,k2Ed)!,IntLengthAbove/(Edspe+Esspe))
       !
       print*,' <<< '//outfilename//'... done.'
       !
+      ! if (thefilenumb .ne. 0) then
+      !   outfilename = 'pp/Espec_ReUsConjUd'//stepname//'.dat'
+      ! else
+      !   outfilename = 'pp/Espec_ReUsConjUd.dat'
+      ! endif
+      ! !
+      ! call listinit(filename=outfilename,handle=hand_b, &
+      !               firstline='nstep time ReUsConjUdmax ReUsConjUdmin')
+      ! call listwrite(hand_b,ReUsConjUdmax,ReUsConjUdmin)
+      ! !
+      ! print*,' <<< '//outfilename//'... done.'
       if (thefilenumb .ne. 0) then
-        outfilename = 'pp/Espec_ReUsConjUd'//stepname//'.dat'
+        outfilename = 'pp/Espec_mean'//stepname//'.dat'
       else
-        outfilename = 'pp/Espec_ReUsConjUd.dat'
+        outfilename = 'pp/Espec_mean.dat'
       endif
       !
-      call listinit(filename=outfilename,handle=hand_b, &
-                    firstline='nstep time ReUsConjUdmax ReUsConjUdmin')
-      call listwrite(hand_b,ReUsConjUdmax,ReUsConjUdmin)
+      call listinit(filename=outfilename,handle=hand_c, &
+                    firstline='nstep time u1mean u2mean rhomean prsmean')
+      call listwrite(hand_c,u1mean,u2mean,rhomean,prsmean)
       !
       print*,' <<< '//outfilename//'... done.'
     endif
@@ -516,27 +503,29 @@ module udf_pp_spectra
     call fftw_free(c_u1spe)
     call fftw_free(c_u2spe)
     call fftw_free(c_pspe)
-    call fftw_free(c_u1c)
+    call fftw_free(c_rou1spe)
+    call fftw_free(c_rou2spe)
+    call fftw_free(c_u1d)
     call fftw_free(c_u1s)
-    call fftw_free(c_u2c)
+    call fftw_free(c_u2d)
     call fftw_free(c_u2s)
     call mpistop
     
-    deallocate(ES,EC,Ecount,Eall,Puc)
-    deallocate(usspe,ucspe)
-    deallocate(u1cR,u2cR,u1sR,u2sR,ucuc,ucus,usus,ReUsConjUd)
+    deallocate(ES,ED,Ecount,Eweak,Pud,kn,Erho)
+    deallocate(usspe,udspe)
+    deallocate(u1dR,u2dR,u1sR,u2sR,udud,udus,usus,ReUsConjUd)
     deallocate(k1,k2)
     !
   end subroutine instantspectra2D
   !
   !
-  subroutine instantspectra3D(thefilenumb,avg)
+  subroutine instantspectra3D(thefilenumb,method)
     !
     !
     use, intrinsic :: iso_c_binding
     use readwrite, only : readinput
     use fftwlink
-    use commvar,only : time,nstep,im,jm,km,ia,ja,ka
+    use commvar,only : time,nstep,im,jm,km,ia,ja,ka,roinf
     use commarray, only: vel, rho, prs
     use hdf5io
     use solver,    only : refcal
@@ -546,36 +535,55 @@ module udf_pp_spectra
     !
     ! arguments
     integer,intent(in) :: thefilenumb
-    logical,intent(in),optional :: avg
+    integer,intent(in) :: method
     character(len=128) :: infilename
     character(len=4) :: stepname
     real(8) :: u1mean,u2mean,u3mean,rhomean,prsmean
-    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: u1spe,u2spe,u3spe,pspe
-    real(8), allocatable, dimension(:) :: ES,EC,Ecount,Eall,Puc
-    complex(8), allocatable, dimension(:,:,:) :: ucspe
-    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: u1c,u2c,u3c,u1s,u2s,u3s
-    real(8), allocatable, dimension(:,:,:) :: ucuc,ucus,usus,ReUsConjUd
+    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: u1spe,u2spe,u3spe,pspe,rou1spe,rou2spe,rou3spe
+    real(8), allocatable, dimension(:) :: ES,ED,Ecount,Eweak,Pud,kn,Erho
+    complex(8), allocatable, dimension(:,:,:) :: udspe
+    complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: u1d,u2d,u3d,u1s,u2s,u3s
+    real(8), allocatable, dimension(:,:,:) :: udud,udus,usus,ReUsConjUd
     real(8), allocatable, dimension(:,:,:) :: k1,k2,k3
-    integer :: allkmax
-    real(8) :: kk,dk !wave number
-    real(8) :: Ecspe,Esspe,Pucspe,Ecphy,Esphy,ucusphy,roav,Ecmax,ReUsConjUdmax,ReUsConjUdmin
+    integer :: allkmax, kOrdinal
+    real(8) :: kk,dk,lambda
+    real(8) :: Edspe,Esspe,Erhospe,Pudspe,Edphy,Esphy,Erhophy,udusphy,Edmax,ReUsConjUdmax,ReUsConjUdmin
     real(8) :: IntLengthAbove
     character(len=128) :: outfilename
-    integer :: hand_a,hand_b
+    integer :: hand_a,hand_b,hand_c
     character(len=1) :: modeio
     integer :: i,j,k,n
-    type(C_PTR) :: forward_plan, backward_plan, c_u1spe, c_u2spe, c_u3spe, c_pspe, c_u1c, c_u2c, c_u3c, c_u1s, c_u2s, c_u3s
+    type(C_PTR) :: forward_plan, backward_plan, c_u1spe, c_u2spe, c_u3spe, c_pspe, c_u1d, c_u2d, c_u3d, &
+                  c_u1s, c_u2s, c_u3s, c_rou1spe, c_rou2spe, c_rou3spe
+    !
+    ! Initialization
+    if((method < 1 ) .or. (method >3))then
+      stop "Error! method @ instantspectra3D problem, not among 1, 2, 3"
+    else
+      if(mpirank==0) print *, "Using method", method
+    endif
     !
     call readinput
     !
+    call refcal
+    if(mpirank==0)  print*, '** refcal done!'
+    !
     modeio='h'
-    ! Initialization
+    !
+    if(ka == 0) stop 'Please use instantspectra2D'
+    !
+    dk = 1.d0
+    if(method==1)then
+      lambda = 1.21d0
+      allkmax = ceiling(log(real(sqrt(2.d0)/3*min(min(ia,ja),ka))/dk)/log(lambda))
+    elseif((method == 2) .or. (method==3))then
+      allkmax=ceiling(real(sqrt(2.d0)/3*min(min(ia,ja),ka))/dk)
+    endif
+    !
+    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,",ka:", ka,"knumber:",allkmax
+    !
     call fftw_mpi_init()
     if(mpirank==0)  print *, "fftw_mpi initialized"
-    !
-    allkmax=ceiling(sqrt(2.d0)/3*min(min(ia,ja),ka))
-    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,",ka:", ka,"allkmax:",allkmax
-    if(ka == 0) stop 'Please use instantspectra2D'
     !
     call mpisizedis_fftw
     if(mpirank==0)  print*, '** mpisizedis & parapp done!'
@@ -583,8 +591,6 @@ module udf_pp_spectra
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
     !
-    call refcal
-    if(mpirank==0)  print*, '** refcal done!'
     !
     allocate(vel(0:im,0:jm,0:km,1:3), rho(0:im,0:jm,0:km), prs(0:im,0:jm,0:km))
     !
@@ -637,7 +643,6 @@ module udf_pp_spectra
     u2mean = psum(u2mean) / (1.d0*ia*ja*ka)
     u3mean = psum(u3mean) / (1.d0*ia*ja*ka)
     prsmean = psum(prsmean) / (1.d0*ia*ja*ka)
-    if(mpirank==0) print *, 'u1mean=',u1mean, 'u2mean=',u2mean, 'u3mean=', u3mean, 'prsmean=',prsmean
     !
     c_u1spe = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u1spe, u1spe, [imfftw,jmfftw,kmfftw])
@@ -647,6 +652,12 @@ module udf_pp_spectra
     call c_f_pointer(c_u3spe, u3spe, [imfftw,jmfftw,kmfftw])
     c_pspe = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_pspe, pspe, [imfftw,jmfftw,kmfftw])
+    c_rou1spe = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_rou1spe, rou1spe, [imfftw,jmfftw,kmfftw])
+    c_rou2spe = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_rou2spe, rou2spe, [imfftw,jmfftw,kmfftw])
+    c_rou3spe = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_rou3spe, rou3spe, [imfftw,jmfftw,kmfftw])
     !
     ! Planning
     forward_plan = fftw_mpi_plan_dft_3d(kafftw, jafftw, iafftw, u1spe,u1spe, &
@@ -662,6 +673,9 @@ module udf_pp_spectra
       u2spe(i,j,k)=CMPLX(vel(i,j,k,2)-u2mean,0.d0,C_INTPTR_T);
       u3spe(i,j,k)=CMPLX(vel(i,j,k,3)-u3mean,0.d0,C_INTPTR_T);
       pspe(i,j,k)=CMPLX(prs(i,j,k)-prsmean,0.d0,C_INTPTR_T);
+      rou1spe(i,j,k)=CMPLX((rho(i,j,k)-roinf)*vel(i,j,k,1),C_INTPTR_T)
+      rou2spe(i,j,k)=CMPLX((rho(i,j,k)-roinf)*vel(i,j,k,2),C_INTPTR_T)
+      rou3spe(i,j,k)=CMPLX((rho(i,j,k)-roinf)*vel(i,j,k,3),C_INTPTR_T)
       !
     enddo
     enddo
@@ -673,6 +687,9 @@ module udf_pp_spectra
     call fftw_mpi_execute_dft(forward_plan,u2spe,u2spe)
     call fftw_mpi_execute_dft(forward_plan,u3spe,u3spe)
     call fftw_mpi_execute_dft(forward_plan,pspe,pspe)
+    call fftw_mpi_execute_dft(forward_plan,rou1spe,rou1spe)
+    call fftw_mpi_execute_dft(forward_plan,rou2spe,rou2spe)
+    call fftw_mpi_execute_dft(forward_plan,rou3spe,rou3spe)
     !
     do k=1,km
     do j=1,jm
@@ -682,6 +699,9 @@ module udf_pp_spectra
       u2spe(i,j,k)=u2spe(i,j,k)/(1.d0*ia*ja*ka)
       u3spe(i,j,k)=u3spe(i,j,k)/(1.d0*ia*ja*ka)
       pspe(i,j,k)=pspe(i,j,k)/(1.d0*ia*ja*ka)
+      rou1spe(i,j,k)=rou1spe(i,j,k)/(1.d0*ia*ja*ka)
+      rou2spe(i,j,k)=rou2spe(i,j,k)/(1.d0*ia*ja*ka)
+      rou3spe(i,j,k)=rou3spe(i,j,k)/(1.d0*ia*ja*ka)
       !
     enddo
     enddo
@@ -689,58 +709,23 @@ module udf_pp_spectra
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-    !
-    do k=1,km
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j,k) = real(i-1,8)
-      else if(i<=ia) then
-        k1(i,j,k) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if(j <= (ja/2+1)) then
-        k2(i,j,k) = real(j-1,8)
-      else if(j<=ja) then
-        k2(i,j,k) = real(j-ja-1,8)
-      else
-        print *,"Error, no wave number possible, j must smaller than ja-1 !"
-      end if
-      !
-      if((k+k0) <= (ka/2+1)) then
-        k3(i,j,k) = real(k+k0-1,8)
-      else if((k+k0)<=ka) then
-        k3(i,j,k) = real(k+k0-ka-1,8)
-      else
-        print *,"Error, no wave number possible, (k+k0) must smaller than ka-1 !"
-      end if
-      !
-    enddo
-    enddo
-    enddo
+    call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
     !
     !!!! Do S-C decomposition
-    allocate(ucspe(1:im,1:jm,1:km))
-    c_u1c = fftw_alloc_complex(alloc_local)
-    call c_f_pointer(c_u1c, u1c, [imfftw,jmfftw,kmfftw])
-    c_u2c = fftw_alloc_complex(alloc_local)
-    call c_f_pointer(c_u2c, u2c, [imfftw,jmfftw,kmfftw])
-    c_u3c = fftw_alloc_complex(alloc_local)
-    call c_f_pointer(c_u3c, u3c, [imfftw,jmfftw,kmfftw])
+    allocate(udspe(1:im,1:jm,1:km))
+    c_u1d = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_u1d, u1d, [imfftw,jmfftw,kmfftw])
+    c_u2d = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_u2d, u2d, [imfftw,jmfftw,kmfftw])
+    c_u3d = fftw_alloc_complex(alloc_local)
+    call c_f_pointer(c_u3d, u3d, [imfftw,jmfftw,kmfftw])
     c_u1s = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u1s, u1s, [imfftw,jmfftw,kmfftw])
     c_u2s = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u2s, u2s, [imfftw,jmfftw,kmfftw])
     c_u3s = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u3s, u3s, [imfftw,jmfftw,kmfftw])
-    allocate(ucuc(1:im,1:jm,1:km),ucus(1:im,1:jm,1:km),usus(1:im,1:jm,1:km))
+    allocate(udud(1:im,1:jm,1:km),udus(1:im,1:jm,1:km),usus(1:im,1:jm,1:km))
     allocate(ReUsConjUd(1:im,1:jm,1:km))
     !
     ! 
@@ -750,18 +735,19 @@ module udf_pp_spectra
     do i=1,im
       kk=k1(i,j,k)**2+k2(i,j,k)**2+k3(i,j,k)**2+1.d-15
       !
-      ucspe(i,j,k) = k1(i,j,k)/kk * u1spe(i,j,k) + k2(i,j,k)/kk * u2spe(i,j,k) + k3(i,j,k)/kk * u3spe(i,j,k)
-      u1c(i,j,k)=  k1(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k1(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
+      udspe(i,j,k) = k1(i,j,k)/kk * u1spe(i,j,k) + k2(i,j,k)/kk * u2spe(i,j,k) + k3(i,j,k)/kk * u3spe(i,j,k)
+      u1d(i,j,k)=  k1(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k1(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
                 + k1(i,j,k)*k3(i,j,k)/kk * u3spe(i,j,k)
-      u2c(i,j,k)=  k2(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k2(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
+      u2d(i,j,k)=  k2(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k2(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
                 + k2(i,j,k)*k3(i,j,k)/kk * u3spe(i,j,k)
-      u3c(i,j,k)=  k3(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k3(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
+      u3d(i,j,k)=  k3(i,j,k)*k1(i,j,k)/kk * u1spe(i,j,k) + k3(i,j,k)*k2(i,j,k)/kk * u2spe(i,j,k) &
                 + k3(i,j,k)*k3(i,j,k)/kk * u3spe(i,j,k)
-      u1s(i,j,k)=  u1spe(i,j,k) - u1c(i,j,k)
-      u2s(i,j,k)=  u2spe(i,j,k) - u2c(i,j,k)
-      u3s(i,j,k)=  u3spe(i,j,k) - u3c(i,j,k)
+      u1s(i,j,k)=  u1spe(i,j,k) - u1d(i,j,k)
+      u2s(i,j,k)=  u2spe(i,j,k) - u2d(i,j,k)
+      u3s(i,j,k)=  u3spe(i,j,k) - u3d(i,j,k)
       !
-      ReUsConjUd(i,j,k) = real(conjg(u1s(i,j,k))*ucspe(i,j,k)) + real(conjg(u2s(i,j,k))*ucspe(i,j,k))
+      ReUsConjUd(i,j,k) = real(conjg(u1s(i,j,k))*udspe(i,j,k)) + real(conjg(u2s(i,j,k))*udspe(i,j,k)) + &
+                         real(conjg(u3s(i,j,k))*udspe(i,j,k))
       !
     enddo
     enddo
@@ -772,125 +758,149 @@ module udf_pp_spectra
     !
     !!!! Give S-C spectra and spectral energy
     !
-    dk = 0.5d0
-    allocate(ES(0:allkmax),EC(0:allkmax),Ecount(0:allkmax),Eall(0:allkmax),Puc(0:allkmax))
+    allocate(ES(0:allkmax),ED(0:allkmax),Erho(0:allkmax),Ecount(0:allkmax))
+    allocate(Eweak(0:allkmax),Pud(0:allkmax),kn(0:allkmax))
     !
-    do i=0,allkmax
-      ES(i) = 0.0d0
-      EC(i) = 0.0d0
-      Ecount(i) = 0.0d0
-      Eall(i) = 0.0d0
-      Puc(i) = 0.0d0
-    end do
-    !
-    Ecspe = 0.0d0
+    ES = 0.0d0
+    ED = 0.0d0
+    Ecount = 0.0d0
+    Eweak = 0.0d0
+    Erho = 0.d0
+    Pud = 0.0d0
+    kn = 0.d0
+    Edspe = 0.0d0
     Esspe = 0.0d0
-    Pucspe = 0.0d0
+    Pudspe = 0.0d0
     !
     do k=1,km
     do j=1,jm
     do i=1,im
       kk=dsqrt(k1(i,j,k)**2+k2(i,j,k)**2+k3(i,j,k)**2+1.d-15)
-      if (abs(kk-nint(kk))<=dk .and. kint(kk,dk)<=allkmax) then
-        ES(kint(kk,dk)) = ES(kint(kk,dk)) + u1s(i,j,k)*conjg(u1s(i,j,k))/2 + &
-                          u2s(i,j,k)*conjg(u2s(i,j,k))/2 + &
-                          u3s(i,j,k)*conjg(u3s(i,j,k))/2
-        EC(kint(kk,dk)) = EC(kint(kk,dk)) + u1c(i,j,k)*conjg(u1c(i,j,k))/2 + &
-                          u2c(i,j,k)*conjg(u2c(i,j,k))/2 + &
-                          u3c(i,j,k)*conjg(u3c(i,j,k))/2
-        Eall(kint(kk,dk)) = Eall(kint(kk,dk)) + u1spe(i,j,k)*conjg(u1spe(i,j,k))/2 + &
-                            u2spe(i,j,k)*conjg(u2spe(i,j,k))/2 + &
-                            u3spe(i,j,k)*conjg(u3spe(i,j,k))/2
-        Puc(kint(kk,dk)) = Puc(kint(kk,dk)) + dimag(pspe(i,j,k)*dconjg(ucspe(i,j,k))*kk)
-        Ecount(kint(kk,dk)) = Ecount(kint(kk,dk)) + 1
+      kOrdinal = kint(kk,dk,method,lambda)
+      if (kOrdinal<=allkmax) then
+        Ecount(kOrdinal) = Ecount(kOrdinal) + 1
+        if((method == 1) .or. (method == 2))then
+          ES(kOrdinal) = ES(kOrdinal) + roinf * u1s(i,j,k)*conjg(u1s(i,j,k))*kk*kk/2 + &
+                        roinf * u2s(i,j,k)*conjg(u2s(i,j,k))*kk*kk/2 + &
+                        roinf * u3s(i,j,k)*conjg(u3s(i,j,k))*kk*kk/2
+          ED(kOrdinal) = ED(kOrdinal) + roinf * u1d(i,j,k)*conjg(u1d(i,j,k))*kk*kk/2 + &
+                        roinf * u2d(i,j,k)*conjg(u2d(i,j,k))*kk*kk/2 + &
+                        roinf * u3d(i,j,k)*conjg(u3d(i,j,k))*kk*kk/2
+          Eweak(kOrdinal) = Eweak(kOrdinal) + roinf * u1spe(i,j,k)*conjg(u1spe(i,j,k))*kk*kk/2 + &
+                        roinf * u2spe(i,j,k)*conjg(u2spe(i,j,k))*kk*kk/2 + &
+                        roinf * u3spe(i,j,k)*conjg(u3spe(i,j,k))*kk*kk/2
+          Erho(kOrdinal) = Erho(kOrdinal) + real(rou1spe(i,j,k)*conjg(u1spe(i,j,k))+ &
+                        rou2spe(i,j,k)*conjg(u2spe(i,j,k)) + &
+                        rou3spe(i,j,k)*conjg(u3spe(i,j,k)))*kk*kk/2
+          Pud(kOrdinal) = Pud(kOrdinal) - dimag(pspe(i,j,k)*dconjg(udspe(i,j,k))*kk)*kk*kk
+          kn(kOrdinal) = kn(kOrdinal) + kk
+        elseif(method == 3)then
+          ES(kOrdinal) = ES(kOrdinal) + roinf * u1s(i,j,k)*conjg(u1s(i,j,k))/2 + &
+                        roinf * u2s(i,j,k)*conjg(u2s(i,j,k))/2 + &
+                        roinf * u3s(i,j,k)*conjg(u3s(i,j,k))/2
+          ED(kOrdinal) = ED(kOrdinal) + roinf * u1d(i,j,k)*conjg(u1d(i,j,k))/2 + &
+                        roinf * u2d(i,j,k)*conjg(u2d(i,j,k))/2 + &
+                        roinf * u3d(i,j,k)*conjg(u3d(i,j,k))/2
+          Eweak(kOrdinal) = Eweak(kOrdinal) + roinf * u1spe(i,j,k)*conjg(u1spe(i,j,k))/2 + &
+                        roinf * u2spe(i,j,k)*conjg(u2spe(i,j,k))/2 + &
+                        roinf * u3spe(i,j,k)*conjg(u3spe(i,j,k))/2
+          Erho(kOrdinal) = Erho(kOrdinal) + real(rou1spe(i,j,k)*conjg(u1spe(i,j,k))+ &
+                        rou2spe(i,j,k)*conjg(u2spe(i,j,k)) + &
+                        rou3spe(i,j,k)*conjg(u3spe(i,j,k)))/2
+          Pud(kOrdinal) = Pud(kOrdinal) - dimag(pspe(i,j,k)*dconjg(udspe(i,j,k))*kk)
+        endif
       end if
-      Ecspe = Ecspe + u1c(i,j,k)*conjg(u1c(i,j,k))/2 + &
-              u2c(i,j,k)*conjg(u2c(i,j,k))/2 + &
-              u3c(i,j,k)*conjg(u3c(i,j,k))/2
-      Esspe = Esspe + u1s(i,j,k)*conjg(u1s(i,j,k))/2 + &
-              u2s(i,j,k)*conjg(u2s(i,j,k))/2 + &
-              u3s(i,j,k)*conjg(u3s(i,j,k))/2
-      IntLengthAbove = IntLengthAbove + u1c(i,j,k)*conjg(u1c(i,j,k))/2/kk + &
-              u2c(i,j,k)*conjg(u2c(i,j,k))/2/kk + &
-              u3c(i,j,k)*conjg(u3c(i,j,k))/2/kk + &
-              u1s(i,j,k)*conjg(u1s(i,j,k))/2/kk + &
-              u2s(i,j,k)*conjg(u2s(i,j,k))/2/kk + &
-              u3s(i,j,k)*conjg(u3s(i,j,k))/2/kk
-      Pucspe = Pucspe + dimag(pspe(i,j,k)*dconjg(ucspe(i,j,k))*(kk**2))/2
+      Edspe = Edspe +  roinf * u1d(i,j,k)*conjg(u1d(i,j,k))/2 + &
+              roinf * u2d(i,j,k)*conjg(u2d(i,j,k))/2 + &
+              roinf * u3d(i,j,k)*conjg(u3d(i,j,k))/2
+      Esspe = Esspe + roinf * u1s(i,j,k)*conjg(u1s(i,j,k))/2 + &
+              roinf * u2s(i,j,k)*conjg(u2s(i,j,k))/2 + &
+              roinf * u3s(i,j,k)*conjg(u3s(i,j,k))/2
+      IntLengthAbove = IntLengthAbove + roinf * u1d(i,j,k)*conjg(u1d(i,j,k))/2/kk + &
+                      roinf * u2d(i,j,k)*conjg(u2d(i,j,k))/2/kk + &
+                      roinf * u3d(i,j,k)*conjg(u3d(i,j,k))/2/kk + &
+                      roinf * u1s(i,j,k)*conjg(u1s(i,j,k))/2/kk + &
+                      roinf * u2s(i,j,k)*conjg(u2s(i,j,k))/2/kk + &
+                      roinf * u3s(i,j,k)*conjg(u3s(i,j,k))/2/kk
+      Pudspe = Pudspe + dimag(pspe(i,j,k)*dconjg(udspe(i,j,k))*(kk**2))/2
+      Erhospe = Erhospe + real(rou1spe(i,j,k)*conjg(u1spe(i,j,k))+ &
+                rou2spe(i,j,k)*conjg(u2spe(i,j,k)) + &
+                rou3spe(i,j,k)*conjg(u3spe(i,j,k)))/2
     enddo
     enddo
     enddo
     !
     do i=0,allkmax
       ES(i) = psum(ES(i))
-      EC(i) = psum(EC(i))
-      Eall(i) = psum(Eall(i))
+      ED(i) = psum(ED(i))
+      Eweak(i) = psum(Eweak(i))
+      Erho(i) = psum(Erho(i))
+      Pud(i) = psum(Pud(i))
       Ecount(i) = psum(Ecount(i))
-      Puc(i) = - psum(Puc(i))
+      if((method==1) .or. (method==2))then
+        kn(i) = psum(kn(i))
+        if(Ecount(i) .ne. 0)then
+          ES(i) = ES(i)/Ecount(i)*4*pi
+          ED(i) = ED(i)/Ecount(i)*4*pi
+          Erho(i) = Erho(i)/Ecount(i)*4*pi
+          Eweak(i) = Eweak(i)/Ecount(i)*4*pi
+          Pud(i) = Pud(i)/Ecount(i)*4*pi
+          kn(i) = kn(i)/Ecount(i)
+        endif
+      else
+        kn(i) = real(i)
+      endif
     end do
     !
-    call mpi_barrier(mpi_comm_world,ierr)
-    !
-    if(present(avg) .and. avg)then
-        do i=0,allkmax
-            if(Ecount(i) .ne. 0)then
-              ES(i) = ES(i)/Ecount(i)*2*pi
-              EC(i) = EC(i)/Ecount(i)*2*pi
-              Eall(i) = Eall(i)/Ecount(i)*2*pi
-              Puc(i) = Puc(i)/Ecount(i)*2*pi
-            endif
-        enddo
-        if(mpirank==0)  print*, '** Do avgerage'
-    endif
-    !
-    !
-    Ecspe = psum(Ecspe)
+    Edspe = psum(Edspe)
     Esspe = psum(Esspe)
-    Pucspe = psum(Pucspe)
+    Erhospe = psum(Erhospe)
+    Pudspe = psum(Pudspe)
     IntLengthAbove = psum(IntLengthAbove)
     !
+    if(mpirank==0)  print*, '** Summation & average'
     if(mpirank==0)  print*, '** spectra calculation finish'
     !
     !!!! Do inverse FFT
     !
-    call fftw_mpi_execute_dft(backward_plan,u1c,u1c)
-    call fftw_mpi_execute_dft(backward_plan,u2c,u2c)
-    call fftw_mpi_execute_dft(backward_plan,u3c,u3c)
+    call fftw_mpi_execute_dft(backward_plan,u1d,u1d)
+    call fftw_mpi_execute_dft(backward_plan,u2d,u2d)
+    call fftw_mpi_execute_dft(backward_plan,u3d,u3d)
     call fftw_mpi_execute_dft(backward_plan,u1s,u1s)
     call fftw_mpi_execute_dft(backward_plan,u2s,u2s)
     call fftw_mpi_execute_dft(backward_plan,u3s,u3s)
     !
     !!!! Give S-C physical energy
-    Ecphy = 0.0d0
+    Edphy = 0.0d0
     Esphy = 0.0d0
-    ucusphy = 0.0d0
-    roav = 0.0d0
-    Ecmax = 0.0d0
+    udusphy = 0.0d0
+    Erhophy = 0.0d0
+    Edmax = 0.0d0
     ReUsConjUdmax = -100.d0
     ReUsConjUdmin = 100.d0
     !
     do k=1,km
     do j=1,jm
     do i=1,im
-      ucuc(i,j,k) = real(u1c(i,j,k))*real(u1c(i,j,k)) + real(u2c(i,j,k))*real(u2c(i,j,k)) + real(u3c(i,j,k))*real(u3c(i,j,k))
-      ucus(i,j,k) = real(u1c(i,j,k))*real(u1s(i,j,k)) + real(u2c(i,j,k))*real(u2s(i,j,k)) + real(u3c(i,j,k))*real(u3s(i,j,k))
+      udud(i,j,k) = real(u1d(i,j,k))*real(u1d(i,j,k)) + real(u2d(i,j,k))*real(u2d(i,j,k)) + real(u3d(i,j,k))*real(u3d(i,j,k))
+      udus(i,j,k) = real(u1d(i,j,k))*real(u1s(i,j,k)) + real(u2d(i,j,k))*real(u2s(i,j,k)) + real(u3d(i,j,k))*real(u3s(i,j,k))
       usus(i,j,k) = real(u1s(i,j,k))*real(u1s(i,j,k)) + real(u2s(i,j,k))*real(u2s(i,j,k)) + real(u3s(i,j,k))*real(u3s(i,j,k))
-      Ecmax = max(Ecmax,ucuc(i,j,k))
-      Ecphy = Ecphy + ucuc(i,j,k)
-      Esphy = Esphy + usus(i,j,k)
-      ucusphy = ucusphy + ucus(i,j,k)
-      roav = roav + rho(i,j,k)
+      Edmax = max(Edmax,udud(i,j,k))
+      Edphy = Edphy + roinf * udud(i,j,k) / 2.d0
+      Esphy = Esphy + roinf * usus(i,j,k) / 2.d0
+      udusphy = udusphy + roinf * udus(i,j,k)
+      Erhophy = Erhophy + (rho(i,j,k)-roinf)*(vel(i,j,k,1)**2 + vel(i,j,k,2)**2+ vel(i,j,k,3)**2) / 2.d0
       ReUsConjUdmax = max(ReUsConjUdmax,ReUsConjUd(i,j,k))
       ReUsConjUdmin = min(ReUsConjUdmin,ReUsConjUd(i,j,k))
     enddo
     enddo
     enddo
     !
-    roav = psum(roav)/(1.d0*ia*ja*ka)
-    Ecphy = psum(Ecphy)/(2.d0*ia*ja*ka)
-    Esphy = psum(Esphy)/(2.d0*ia*ja*ka)
-    ucusphy = psum(ucusphy)/(1.d0*ia*ja*ka)
-    Ecmax = pmax(Ecmax)
+    Erhophy = psum(Erhophy)/(1.d0*ia*ja*ka)
+    Edphy = psum(Edphy)/(1.d0*ia*ja*ka)
+    Esphy = psum(Esphy)/(1.d0*ia*ja*ka)
+    udusphy = psum(udusphy)/(1.d0*ia*ja*ka)
+    Edmax = pmax(Edmax)
     ReUsConjUdmax = pmax(ReUsConjUdmax)
     ReUsConjUdmin = pmin(ReUsConjUdmin)
     !
@@ -904,9 +914,9 @@ module udf_pp_spectra
       endif
       !
       call listinit(filename=outfilename,handle=hand_a, &
-                        firstline='nstep time k ES EC Eall Puc')
+                        firstline='nstep time k ES ED Eweak Erho Pud')
       do i=0,allkmax
-        call listwrite(hand_a,dble(i),ES(i),EC(i),Eall(i),Puc(i))
+        if(Ecount(i)>1e-3) call listwrite(hand_a,kn(i),ES(i),ED(i),Eweak(i),Erho(i),Pud(i))
       end do
       !
       print*,' <<< '//outfilename//'... done.'
@@ -918,21 +928,32 @@ module udf_pp_spectra
       endif
       !
       call listinit(filename=outfilename,handle=hand_b, &
-                    firstline='nstep time Ecphy Esphy ucusphy Ephyall Ecspe Esspe Pucspe Espeall Ecmax IntLen')
-      call listwrite(hand_b,Ecphy,Esphy,ucusphy,Ecphy+Esphy+ucusphy&
-                    ,Ecspe,Esspe,Pucspe,Ecspe+Esspe,Ecmax,IntLengthAbove/(Ecspe+Esspe))
+                    firstline='nstep time Edphy Esphy udusphy Eweakphy Erhophy Edspe Esspe Pudspe Eweakspe Erhospe Edmax')! IntLen')
+      call listwrite(hand_b,Edphy,Esphy,udusphy,Edphy+Esphy+udusphy, Erhophy,&
+                    Edspe,Esspe,Pudspe,Edspe+Esspe,Erhospe,Edmax)!IntLengthAbove/(Ecspe+Esspe))
       !
       print*,' <<< '//outfilename//'... done.'
       !
+      ! if (thefilenumb .ne. 0) then
+      !   outfilename = 'pp/Espec_ReUsConjUd'//stepname//'.dat'
+      ! else
+      !   outfilename = 'pp/Espec_ReUsConjUd.dat'
+      ! endif
+      ! !
+      ! call listinit(filename=outfilename,handle=hand_b, &
+      !               firstline='nstep time ReUsConjUdmax ReUsConjUdmin')
+      ! call listwrite(hand_b,ReUsConjUdmax,ReUsConjUdmin)
+      ! !
+      ! print*,' <<< '//outfilename//'... done.'
       if (thefilenumb .ne. 0) then
-        outfilename = 'pp/Espec_ReUsConjUd'//stepname//'.dat'
+        outfilename = 'pp/Espec_mean'//stepname//'.dat'
       else
-        outfilename = 'pp/Espec_ReUsConjUd.dat'
+        outfilename = 'pp/Espec_mean.dat'
       endif
       !
-      call listinit(filename=outfilename,handle=hand_b, &
-                    firstline='nstep time ReUsConjUdmax ReUsConjUdmin')
-      call listwrite(hand_b,ReUsConjUdmax,ReUsConjUdmin)
+      call listinit(filename=outfilename,handle=hand_c, &
+                    firstline='nstep time u1mean u2mean u3mean rhomean prsmean')
+      call listwrite(hand_c,u1mean,u2mean,u3mean,rhomean,prsmean)
       !
       print*,' <<< '//outfilename//'... done.'
     endif
@@ -944,17 +965,20 @@ module udf_pp_spectra
     call fftw_free(c_u2spe)
     call fftw_free(c_u3spe)
     call fftw_free(c_pspe)
-    call fftw_free(c_u1c)
+    call fftw_free(c_rou1spe)
+    call fftw_free(c_rou2spe)
+    call fftw_free(c_rou3spe)
+    call fftw_free(c_u1d)
     call fftw_free(c_u1s)
-    call fftw_free(c_u2c)
+    call fftw_free(c_u2d)
     call fftw_free(c_u2s)
-    call fftw_free(c_u3c)
+    call fftw_free(c_u3d)
     call fftw_free(c_u3s)
     call mpistop
     
-    deallocate(ES,EC,Ecount,Eall,Puc)
-    deallocate(ucspe)
-    deallocate(ucuc,ucus,usus,ReUsConjUd)
+    deallocate(ES,ED,Ecount,Eweak,Pud,kn,Erho)
+    deallocate(udspe)
+    deallocate(udud,udus,usus,ReUsConjUd)
     deallocate(k1,k2,k3)
     !
   end subroutine instantspectra3D
@@ -994,6 +1018,9 @@ module udf_pp_spectra
     !
     call readic
     !
+    call refcal
+    if(mpirank==0)  print*, '** Referencecal done'
+    !
     modeio='h'
     ! Initialization
     call fftw_mpi_init()
@@ -1009,8 +1036,6 @@ module udf_pp_spectra
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
     !
-    call refcal
-    if(mpirank==0)  print*, '** Referencecal done'
     !
     allocate(vel(0:im,0:jm,0:km,1:2))
     !
@@ -1075,35 +1100,10 @@ module udf_pp_spectra
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    !
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     !
-    dk = 0.5d0
+    dk = 1.d0
     !
     Espeall = 0.d0
     Dissip = 0.d0
@@ -1159,6 +1159,7 @@ module udf_pp_spectra
     use hdf5io
     use utility,  only : listinit,listwrite
     use parallel, only : bcast, pmax, pmin, psum, lio, parallelini, mpistop
+    use solver, only: refcal
     include 'fftw3-mpi.f03'
     !
     ! arguments
@@ -1179,6 +1180,9 @@ module udf_pp_spectra
     call readinput
     !
     call readic
+    !
+    call refcal
+    if(mpirank==0)  print*, '** Referencecal done'
     !
     modeio='h'
     ! Initialization
@@ -1277,43 +1281,9 @@ module udf_pp_spectra
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
     !
-    do k=1,km
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j,k) = real(i-1,8)
-      else if(i<=ia) then
-        k1(i,j,k) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if(j <= (ja/2+1)) then
-        k2(i,j,k) = real(j-1,8)
-      else if(j<=ja) then
-        k2(i,j,k) = real(j-ja-1,8)
-      else
-        print *,"Error, no wave number possible, j must smaller than ja-1 !"
-      end if
-      !
-      if((k+k0) <= (ka/2+1)) then
-        k3(i,j,k) = real(k+k0-1,8)
-      else if((k+k0)<=ka) then
-        k3(i,j,k) = real(k+k0-ka-1,8)
-      else
-        print *,"Error, no wave number possible, (k+k0) must smaller than ka-1 !"
-      end if
-      !
-    enddo
-    enddo
-    enddo
+    call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
     !
-    dk = 0.5d0
+    dk = 1.0d0
     !
     Espeall = 0.d0
     TauAbove = 0.d0
@@ -1368,7 +1338,7 @@ module udf_pp_spectra
     !
   end subroutine initparam3D
   !
-  subroutine instanttriad2D(thefilenumb,avg)
+  subroutine instanttriad2D(thefilenumb,method)
     !
     use, intrinsic :: iso_c_binding
     use readwrite, only : readinput
@@ -1383,7 +1353,7 @@ module udf_pp_spectra
     !
     ! arguments
     integer,intent(in) :: thefilenumb
-    logical,intent(in),optional :: avg
+    integer,intent(in) :: method
     character(len=128) :: infilename
     character(len=4) :: stepname
     real(8) :: u1mean,u2mean,rhomean,prsmean
@@ -1392,10 +1362,11 @@ module udf_pp_spectra
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: theta,u1c,u2c,u1s,u2s
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: T11,T12,T21,T22,Tstheta1,Tstheta2,Tdtheta1,Tdtheta2
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:) :: T11s,T12s,T21s,T22s,T11d,T12d,T21d,T22d
-    real(8), allocatable, dimension(:) :: Ts,Tstheta,Td,Tdd,Tcount,Tss,Tdstheta,Tddtheta
+    real(8), allocatable, dimension(:) :: Ts,Tstheta,Td,Tdd,Tcount,Tss,Tdstheta,Tddtheta,kn
+    real(8) :: TsO,TsthetaO,TdO,TddO,TssO,TdsthetaO,TddthetaO
     real(8), allocatable, dimension(:,:) :: k1,k2,u1,u2
-    integer :: allkmax
-    real(8) :: k,dk,p,q,kx,ky !wave number
+    integer :: allkmax, kOrdinal
+    real(8) :: kk,dk,p,q,kx,ky,lambda !wave number
     character(len=128) :: outfilename
     integer :: hand_a,hand_b
     character(len=1) :: modeio
@@ -1405,26 +1376,41 @@ module udf_pp_spectra
     type(C_PTR) :: c_T11,c_T12,c_T21,c_T22,c_Tstheta1,c_Tstheta2,c_Tdtheta1,c_Tdtheta2
     type(C_PTR) :: c_T11s,c_T12s,c_T21s,c_T22s,c_T11d,c_T12d,c_T21d,c_T22d
     !
+    ! Initialization
+    if((method < 1 ) .or. (method >3))then
+      stop "Error! method @ instantspectra2D problem, not among 1, 2, 3"
+    else
+      if(mpirank==0) print *, "Using method", method
+    endif
+    !
     call readinput
     !
+    call refcal
+    if(mpirank==0)  print*, '** refcal done!'
+    !
     modeio='h'
-    dk = 0.5d0
-    ! Initialization
+    !
+    if(ka .ne. 0) stop 'Please use instantspectra3D'
+    !
+    dk = 1.d0
+    !
+    if(method==1)then
+      lambda = 1.21d0
+      allkmax = ceiling(log(real(sqrt(2.d0)/3*min(ia,ja))/dk)/log(lambda))
+    elseif((method == 2) .or. (method==3))then
+      allkmax=ceiling(real(sqrt(2.d0)/3*min(ia,ja))/dk)
+    endif
+    !
+    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,"knumber:",allkmax
+    !
     call fftw_mpi_init()
     if(mpirank==0)  print *, "fftw_mpi initialized"
-    !
-    allkmax=ceiling(1.d0*min(ia,ja))
-    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,"allkmax:",allkmax
-    if(ka .ne. 0) stop 'Please use instantspectra3D'
     !
     call mpisizedis_fftw
     if(mpirank==0)  print*, '** mpisizedis & parapp done!'
     !
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
-    !
-    call refcal
-    if(mpirank==0)  print*, '** refcal done!'
     !
     allocate(vel(0:im,0:jm,0:km,1:2), rho(0:im,0:jm,0:km), prs(0:im,0:jm,0:km))
     !
@@ -1460,12 +1446,12 @@ module udf_pp_spectra
     prsmean = 0.0d0
     !
     do i=1,im
-      do j=1,jm
-        u1mean = u1mean + vel(i,j,0,1)
-        u2mean = u2mean + vel(i,j,0,2)
-        rhomean = rhomean + rho(i,j,0)
-        prsmean = prsmean + prs(i,j,0)
-      enddo
+    do j=1,jm
+      u1mean = u1mean + vel(i,j,0,1)
+      u2mean = u2mean + vel(i,j,0,2)
+      rhomean = rhomean + rho(i,j,0)
+      prsmean = prsmean + prs(i,j,0)
+    enddo
     enddo
     !
     rhomean = psum(rhomean) / (1.0d0*ia*ja)
@@ -1515,31 +1501,7 @@ module udf_pp_spectra
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+j0) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     allocate(usspe(1:im,1:jm),ucspe(1:im,1:jm))
     !
@@ -1558,16 +1520,16 @@ module udf_pp_spectra
     do j=1,jm
       do i=1,im
         !
-        k=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
-        usspe(i,j) = u1spe(i,j)*k2(i,j)/k - u2spe(i,j)*k1(i,j)/k
-        ucspe(i,j) = u1spe(i,j)*k1(i,j)/k + u2spe(i,j)*k2(i,j)/k
+        kk=dsqrt(k1(i,j)**2+k2(i,j)**2+1.d-15)
+        usspe(i,j) = u1spe(i,j)*k2(i,j)/kk - u2spe(i,j)*k1(i,j)/kk
+        ucspe(i,j) = u1spe(i,j)*k1(i,j)/kk + u2spe(i,j)*k2(i,j)/kk
         !
-        u1c(i,j)=  ucspe(i,j)*k1(i,j)/k 
-        u2c(i,j)=  ucspe(i,j)*k2(i,j)/k
-        u1s(i,j)=  usspe(i,j)*k2(i,j)/k 
-        u2s(i,j)= -usspe(i,j)*k1(i,j)/k
+        u1c(i,j)=  ucspe(i,j)*k1(i,j)/kk
+        u2c(i,j)=  ucspe(i,j)*k2(i,j)/kk
+        u1s(i,j)=  usspe(i,j)*k2(i,j)/kk 
+        u2s(i,j)= -usspe(i,j)*k1(i,j)/kk
         !
-        theta(i,j)= CMPLX(0.d0,1.d0,C_INTPTR_T) * (ucspe(i,j) * k)
+        theta(i,j)= CMPLX(0.d0,1.d0,C_INTPTR_T) * (ucspe(i,j) * kk)
         !
       end do
     end do
@@ -1698,18 +1660,17 @@ module udf_pp_spectra
     !
     allocate(Ts(0:allkmax),Tstheta(0:allkmax),Td(0:allkmax),Tdstheta(0:allkmax))
     allocate(Tddtheta(0:allkmax),Tcount(0:allkmax),Tss(0:allkmax),Tdd(0:allkmax))
+    allocate(kn(0:allkmax))
     !
-    do i=0,allkmax
-      Ts(i)= 0.0d0
-      Tstheta(i)= 0.0d0
-      Td(i)= 0.0d0
-      Tddtheta(i)= 0.0d0
-      Tdstheta(i)= 0.0d0
-      Tcount(i)=0
-      Tss(i)=0.d0
-      Tdd(i)=0.d0
-    end do
-    !
+    Ts= 0.0d0
+    Tstheta= 0.0d0
+    Td= 0.0d0
+    Tddtheta= 0.0d0
+    Tdstheta= 0.0d0
+    Tcount=0
+    Tss=0.d0
+    Tdd=0.d0
+    kn=0.d0
     k2Ts = 0.d0
     k2Tc = 0.d0
     Tsall = 0.d0
@@ -1723,166 +1684,122 @@ module udf_pp_spectra
     do i = 1,im
       kx = k1(i,j)
       ky = k2(i,j)
-      k=dsqrt(kx**2+ky**2+1.d-15)
+      kk=dsqrt(kx**2+ky**2+1.d-15)
+      kOrdinal = kint(kk,dk,method,lambda)
       !
-      if(kint(k,dk)==0)then
+      if(kOrdinal==0)then
         print *, u1s(i,j), u2s(i,j), T11s(i,j), T12s(i,j), T21s(i,j), T22s(i,j)
       endif
       !
-      if(kint(k,dk)<= allkmax)then
-        Ts(kint(k,dk)) = Ts(kint(k,dk)) + &
-              ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11(i,j))) + &
-              ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11(i,j))) + &
-              ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12(i,j))) + &
-              ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12(i,j))) + &
-              ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21(i,j))) + &
-              ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21(i,j))) + &
-              ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22(i,j))) + &
-              ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22(i,j)))
-
-        Tss(kint(k,dk)) = Tss(kint(k,dk)) + &
-              ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11s(i,j))) + &
-              ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11s(i,j))) + &
-              ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12s(i,j))) + &
-              ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12s(i,j))) + &
-              ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21s(i,j))) + &
-              ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21s(i,j))) + &
-              ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22s(i,j))) + &
-              ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22s(i,j)))
-            !
-        Tstheta(kint(k,dk)) = Tstheta(kint(k,dk)) + &
-              ProjectP2(1,1,kx,ky) * dreal(u1s(i,j)*conjg(Tstheta1(i,j)+Tdtheta1(i,j))) + &
-              ProjectP2(1,2,kx,ky) * dreal(u1s(i,j)*conjg(Tstheta2(i,j)+Tdtheta2(i,j))) + &
-              ProjectP2(2,1,kx,ky) * dreal(u2s(i,j)*conjg(Tstheta1(i,j)+Tstheta1(i,j))) + &
-              ProjectP2(2,2,kx,ky) * dreal(u2s(i,j)*conjg(Tstheta2(i,j)+Tdtheta2(i,j)))
-            !
-        Td(kint(k,dk)) = Td(kint(k,dk)) + &
-              ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11(i,j))) + &
-              ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11(i,j))) + &
-              ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12(i,j))) + &
-              ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12(i,j))) + &
-              ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21(i,j))) + &
-              ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21(i,j))) + &
-              ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22(i,j))) + &
-              ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22(i,j)))
-            !
-        Tdd(kint(k,dk)) = Tdd(kint(k,dk)) + &
-              ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11d(i,j))) + &
-              ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11d(i,j))) + &
-              ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12d(i,j))) + &
-              ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12d(i,j))) + &
-              ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21d(i,j))) + &
-              ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21d(i,j))) + &
-              ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22d(i,j))) + &
-              ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22d(i,j)))
-            !
-        Tdstheta(kint(k,dk)) = Tdstheta(kint(k,dk)) + &
-              ProjectPi2(1,1,kx,ky) * dreal(u1c(i,j)*conjg(Tstheta1(i,j))) + &
-              ProjectPi2(1,2,kx,ky) * dreal(u1c(i,j)*conjg(Tstheta2(i,j))) + &
-              ProjectPi2(2,1,kx,ky) * dreal(u2c(i,j)*conjg(Tstheta1(i,j))) + &
-              ProjectPi2(2,2,kx,ky) * dreal(u2c(i,j)*conjg(Tstheta2(i,j)))
-              !
-        Tddtheta(kint(k,dk)) = Tddtheta(kint(k,dk)) + &
-              ProjectPi2(1,1,kx,ky) * dreal(u1c(i,j)*conjg(Tdtheta1(i,j))) + &
-              ProjectPi2(1,2,kx,ky) * dreal(u1c(i,j)*conjg(Tdtheta2(i,j))) + &
-              ProjectPi2(2,1,kx,ky) * dreal(u2c(i,j)*conjg(Tdtheta1(i,j))) + &
-              ProjectPi2(2,2,kx,ky) * dreal(u2c(i,j)*conjg(Tdtheta2(i,j)))
-        Tcount(kint(k,dk)) = Tcount(kint(k,dk))+1
-      endif
-      Tsall = Tsall + ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11(i,j))) + &
-                      ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11(i,j))) + &
-                      ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12(i,j))) + &
-                      ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12(i,j))) + &
-                      ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21(i,j))) + &
-                      ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21(i,j))) + &
-                      ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22(i,j))) + &
-                      ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22(i,j)))
-      Tssall=Tssall + ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11s(i,j))) + &
-                      ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11s(i,j))) + &
-                      ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12s(i,j))) + &
-                      ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12s(i,j))) + &
-                      ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21s(i,j))) + &
-                      ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21s(i,j))) + &
-                      ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22s(i,j))) + &
-                      ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22s(i,j)))
-      Tcall = Tcall + ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11(i,j))) + &
-                      ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11(i,j))) + &
-                      ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12(i,j))) + &
-                      ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12(i,j))) + &
-                      ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21(i,j))) + &
-                      ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21(i,j))) + &
-                      ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22(i,j))) + &
-                      ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22(i,j)))
-      Tccall=Tccall + ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11d(i,j))) + &
-                      ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11d(i,j))) + &
-                      ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12d(i,j))) + &
-                      ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12d(i,j))) + &
-                      ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21d(i,j))) + &
-                      ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21d(i,j))) + &
-                      ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22d(i,j))) + &
-                      ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22d(i,j)))
-      k2Ts = k2Ts + k**2 * ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11(i,j))) + &
-              k**2 * ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11(i,j))) + &
-              k**2 * ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12(i,j))) + &
-              k**2 * ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12(i,j))) + &
-              k**2 * ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21(i,j))) + &
-              k**2 * ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21(i,j))) + &
-              k**2 * ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22(i,j))) + &
-              k**2 * ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22(i,j)))
-      k2Tss= k2Tss+ k**2 * ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11s(i,j))) + &
-              k**2 * ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11s(i,j))) + &
-              k**2 * ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12s(i,j))) + &
-              k**2 * ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12s(i,j))) + &
-              k**2 * ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21s(i,j))) + &
-              k**2 * ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21s(i,j))) + &
-              k**2 * ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22s(i,j))) + &
-              k**2 * ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22s(i,j)))
-      k2Tc =  k2Tc + k**2 * ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11(i,j))) + &
-              k**2 * ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11(i,j))) + &
-              k**2 * ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12(i,j))) + &
-              k**2 * ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12(i,j))) + &
-              k**2 * ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21(i,j))) + &
-              k**2 * ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21(i,j))) + &
-              k**2 * ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22(i,j))) + &
-              k**2 * ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22(i,j)))
-      k2Tcc=  k2Tcc+ k**2 * ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11d(i,j))) + &
-              k**2 * ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11d(i,j))) + &
-              k**2 * ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12d(i,j))) + &
-              k**2 * ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12d(i,j))) + &
-              k**2 * ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21d(i,j))) + &
-              k**2 * ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21d(i,j))) + &
-              k**2 * ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22d(i,j))) + &
-              k**2 * ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22d(i,j)))
+      TsO       = ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11(i,j))) + &
+                  ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11(i,j))) + &
+                  ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12(i,j))) + &
+                  ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12(i,j))) + &
+                  ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21(i,j))) + &
+                  ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21(i,j))) + &
+                  ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22(i,j))) + &
+                  ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22(i,j)))
+      !
+      TssO       =ProjectP3(1,1,1,kx,ky) * dimag(u1s(i,j)*conjg(T11s(i,j))) + &
+                  ProjectP3(2,1,1,kx,ky) * dimag(u2s(i,j)*conjg(T11s(i,j))) + &
+                  ProjectP3(1,1,2,kx,ky) * dimag(u1s(i,j)*conjg(T12s(i,j))) + &
+                  ProjectP3(2,1,2,kx,ky) * dimag(u2s(i,j)*conjg(T12s(i,j))) + &
+                  ProjectP3(1,2,1,kx,ky) * dimag(u1s(i,j)*conjg(T21s(i,j))) + &
+                  ProjectP3(2,2,1,kx,ky) * dimag(u2s(i,j)*conjg(T21s(i,j))) + &
+                  ProjectP3(1,2,2,kx,ky) * dimag(u1s(i,j)*conjg(T22s(i,j))) + &
+                  ProjectP3(2,2,2,kx,ky) * dimag(u2s(i,j)*conjg(T22s(i,j)))
+      !
+      TsthetaO   =ProjectP2(1,1,kx,ky) * dreal(u1s(i,j)*conjg(Tstheta1(i,j)+Tdtheta1(i,j))) + &
+                  ProjectP2(1,2,kx,ky) * dreal(u1s(i,j)*conjg(Tstheta2(i,j)+Tdtheta2(i,j))) + &
+                  ProjectP2(2,1,kx,ky) * dreal(u2s(i,j)*conjg(Tstheta1(i,j)+Tstheta1(i,j))) + &
+                  ProjectP2(2,2,kx,ky) * dreal(u2s(i,j)*conjg(Tstheta2(i,j)+Tdtheta2(i,j)))
+      !
+      TdO       = ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11(i,j))) + &
+                  ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11(i,j))) + &
+                  ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12(i,j))) + &
+                  ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12(i,j))) + &
+                  ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21(i,j))) + &
+                  ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21(i,j))) + &
+                  ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22(i,j))) + &
+                  ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22(i,j)))
+      !
+      TddO      = ProjectPi3(1,1,1,kx,ky) * dimag(u1c(i,j)*conjg(T11d(i,j))) + &
+                  ProjectPi3(2,1,1,kx,ky) * dimag(u2c(i,j)*conjg(T11d(i,j))) + &
+                  ProjectPi3(1,1,2,kx,ky) * dimag(u1c(i,j)*conjg(T12d(i,j))) + &
+                  ProjectPi3(2,1,2,kx,ky) * dimag(u2c(i,j)*conjg(T12d(i,j))) + &
+                  ProjectPi3(1,2,1,kx,ky) * dimag(u1c(i,j)*conjg(T21d(i,j))) + &
+                  ProjectPi3(2,2,1,kx,ky) * dimag(u2c(i,j)*conjg(T21d(i,j))) + &
+                  ProjectPi3(1,2,2,kx,ky) * dimag(u1c(i,j)*conjg(T22d(i,j))) + &
+                  ProjectPi3(2,2,2,kx,ky) * dimag(u2c(i,j)*conjg(T22d(i,j)))
+      !
+      TdsthetaO = ProjectPi2(1,1,kx,ky) * dreal(u1c(i,j)*conjg(Tstheta1(i,j))) + &
+                  ProjectPi2(1,2,kx,ky) * dreal(u1c(i,j)*conjg(Tstheta2(i,j))) + &
+                  ProjectPi2(2,1,kx,ky) * dreal(u2c(i,j)*conjg(Tstheta1(i,j))) + &
+                  ProjectPi2(2,2,kx,ky) * dreal(u2c(i,j)*conjg(Tstheta2(i,j)))
+      !
+      TddthetaO = ProjectPi2(1,1,kx,ky) * dreal(u1c(i,j)*conjg(Tdtheta1(i,j))) + &
+                  ProjectPi2(1,2,kx,ky) * dreal(u1c(i,j)*conjg(Tdtheta2(i,j))) + &
+                  ProjectPi2(2,1,kx,ky) * dreal(u2c(i,j)*conjg(Tdtheta1(i,j))) + &
+                  ProjectPi2(2,2,kx,ky) * dreal(u2c(i,j)*conjg(Tdtheta2(i,j)))
+      !
+      if(kOrdinal<= allkmax)then
+        Tcount(kOrdinal)   = Tcount(kOrdinal)   + 1
+        if((method == 1) .or. (method == 2))then
+          Ts(kOrdinal)       = Ts(kOrdinal)       - TsO*kk
+          Tstheta(kOrdinal)  = Tstheta(kOrdinal)  + TsthetaO*kk
+          Td(kOrdinal)       = Td(kOrdinal)       - TdO*kk
+          Tddtheta(kOrdinal) = Tddtheta(kOrdinal) + TddthetaO*kk
+          Tdstheta(kOrdinal) = Tdstheta(kOrdinal) + TdsthetaO*kk
+          Tss(kOrdinal)      = Tss(kOrdinal)      - TssO*kk
+          Tdd(kOrdinal)      = Tdd(kOrdinal)      - TddO*kk
+          kn(kOrdinal)       = kn(kOrdinal)       + kk
+        elseif(method == 3)then
+          Ts(kOrdinal)       = Ts(kOrdinal)       - TsO
+          Tstheta(kOrdinal)  = Tstheta(kOrdinal)  + TsthetaO
+          Td(kOrdinal)       = Td(kOrdinal)       - TdO
+          Tddtheta(kOrdinal) = Tddtheta(kOrdinal) + TddthetaO
+          Tdstheta(kOrdinal) = Tdstheta(kOrdinal) + TdsthetaO
+          Tss(kOrdinal)      = Tss(kOrdinal)      - TssO
+          Tdd(kOrdinal)      = Tdd(kOrdinal)      - TddO
+        endif
+      end if
+      !
+      Tsall = Tsall + TsO
+      Tssall= Tssall+ TssO
+      Tcall = Tcall + TdO
+      Tccall= Tccall+ TddO
+      k2Ts  = k2Ts  + kk**2 * TsO
+      k2Tss = k2Tss + kk**2 * TssO
+      k2Tc  = k2Tc  + kk**2 * TdO
+      k2Tcc = k2Tcc + kk**2 * TddO
     enddo
     enddo
     !
     do i=0,allkmax
-      Ts(i) = -psum(Ts(i))
+      Ts(i) = psum(Ts(i))
       Tstheta(i) = psum(Tstheta(i))
-      Td(i) = -psum(Td(i))
+      Td(i) = psum(Td(i))
       Tdstheta(i) = psum(Tdstheta(i))
       Tddtheta(i) = psum(Tddtheta(i))
-      Tss(i) = -psum(Tss(i))
-      Tdd(i) = -psum(Tdd(i))
+      Tss(i) = psum(Tss(i))
+      Tdd(i) = psum(Tdd(i))
       Tcount(i) = psum(Tcount(i))
-    end do
-    !
-    call mpi_barrier(mpi_comm_world,ierr)
-    !
-    if(present(avg) .and. avg)then
-        do i=0,allkmax
-        if(Tcount(i) .ne. 0) then
-            Ts(i) = Ts(i)/Tcount(i)*2*pi
-            Tstheta(i) = Tstheta(i)/Tcount(i)*2*pi
-            Td(i) = Td(i)/Tcount(i)*2*pi
-            Tdstheta(i) = Tdstheta(i)/Tcount(i)*2*pi
-            Tddtheta(i) = Tddtheta(i)/Tcount(i)*2*pi
-            Tss(i) = Tss(i)/Tcount(i)*2*pi
-            Tdd(i) = Tdd(i)/Tcount(i)*2*pi
+      if((method == 1) .or. (method == 2))then
+        kn(i) = psum(kn(i))
+        if(Tcount(i) .ne. 0)then
+          Ts(i) = Ts(i)/Tcount(i)*2*pi
+          Tstheta(i) = Tstheta(i)/Tcount(i)*2*pi
+          Td(i) = Td(i)/Tcount(i)*2*pi
+          Tdstheta(i) = Tdstheta(i)/Tcount(i)*2*pi
+          Tddtheta(i) = Tddtheta(i)/Tcount(i)*2*pi
+          Tss(i) = Tss(i)/Tcount(i)*2*pi
+          Tdd(i) = Tdd(i)/Tcount(i)*2*pi
+          kn(i) = kn(i)/tcount(i)
         endif
-        end do
-        if(mpirank==0)  print*, '** Do avgerage'
-    endif
+      else
+        kn(i) = real(i)
+      endif
+    end do
     !
     Tsall = psum(Tsall)
     Tcall = psum(Tcall)
@@ -1892,6 +1809,8 @@ module udf_pp_spectra
     Tccall = psum(Tccall)
     k2Tss = psum(k2Tss)
     k2Tcc = psum(k2Tcc)
+    !
+    if(mpirank==0)  print*, '** Summation & average'
     !
     if(mpirank == 0) then
       if (thefilenumb .ne. 0) then
@@ -1903,7 +1822,7 @@ module udf_pp_spectra
       call listinit(filename=outfilename,handle=hand_a, &
                         firstline='nstep time k Ts Tss Tstheta Td Tdd Tdstheta Tddtheta')
       do i=0,allkmax
-        call listwrite(hand_a,dble(i),Ts(i),Tss(i),Tstheta(i),Td(i),Tdd(i),Tdstheta(i),Tddtheta(i))
+        if(Tcount(i)>1e-3) call listwrite(hand_a,kn(i),Ts(i),Tss(i),Tstheta(i),Td(i),Tdd(i),Tdstheta(i),Tddtheta(i))
       end do
       !
       print*,' <<< '//outfilename//'... done.'
@@ -1953,12 +1872,12 @@ module udf_pp_spectra
     !
   end subroutine instanttriad2D
   !
-  subroutine instanttriad3D(thefilenumb,avg)
+  subroutine instanttriad3D(thefilenumb,method)
     !
     use, intrinsic :: iso_c_binding
     use readwrite, only : readinput
     use fftwlink
-    use commvar,   only : time,nstep,im,jm,km
+    use commvar,   only : time,nstep,im,jm,km,ia,ja,ka
     use commarray, only : vel, rho, prs
     use hdf5io
     use solver,    only : refcal
@@ -1968,7 +1887,7 @@ module udf_pp_spectra
     !
     ! arguments
     integer,intent(in) :: thefilenumb
-    logical,intent(in),optional :: avg
+    integer,intent(in) :: method
     character(len=128) :: infilename
     character(len=4) :: stepname
     real(8) :: u1mean,u2mean,u3mean,rhomean,prsmean
@@ -1979,10 +1898,11 @@ module udf_pp_spectra
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: Tstheta1,Tstheta2,Tstheta3,Tdtheta1,Tdtheta2,Tdtheta3
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: T11s,T12s,T13s,T21s,T22s,T23s,T31s,T32s,T33s
     complex(C_DOUBLE_COMPLEX), pointer, dimension(:,:,:) :: T11d,T12d,T13d,T21d,T22d,T23d,T31d,T32d,T33d
-    real(8), allocatable, dimension(:) :: Ts,Tstheta,Td,Tddtheta,Tdstheta,Tcount,Tss,Tdd
+    real(8), allocatable, dimension(:) :: Ts,Tstheta,Td,Tddtheta,Tdstheta,Tcount,Tss,Tdd,kn
+    real(8) :: TsO,TsthetaO,TdO,TddO,TssO,TdsthetaO,TddthetaO
     real(8), allocatable, dimension(:,:,:) :: k1,k2,k3,u1,u2,u3
-    integer :: allkmax
-    real(8) :: kk,dk,p,q,kx,ky,kz !wave number
+    integer :: allkmax, kOrdinal
+    real(8) :: kk,dk,p,q,kx,ky,kz,lambda !wave number
     character(len=128) :: outfilename
     integer :: hand_a,hand_b
     character(len=1) :: modeio
@@ -1995,26 +1915,41 @@ module udf_pp_spectra
     type(C_PTR) :: c_T11s,c_T12s,c_T13s,c_T21s,c_T22s,c_T23s,c_T31s,c_T32s,c_T33s
     type(C_PTR) :: c_T11d,c_T12d,c_T13d,c_T21d,c_T22d,c_T23d,c_T31d,c_T32d,c_T33d
     !
+    ! Initialization
+    if((method < 1 ) .or. (method >3))then
+      stop "Error! method @ instantspectra2D problem, not among 1, 2, 3"
+    else
+      if(mpirank==0) print *, "Using method", method
+    endif
+    !
     call readinput
     !
+    call refcal
+    if(mpirank==0)  print*, '** refcal done!'
+    !
     modeio='h'
-    dk = 0.5d0
-    ! Initialization
+    !
+    if(ka==0) stop 'Please use instantspectra2D'
+    !
+    dk = 1.0d0
+    !
+    if(method==1)then
+      lambda = 1.21d0
+      allkmax = ceiling(log(real(sqrt(2.d0)/3*min(ia,ja,ka))/dk)/log(lambda))
+    elseif((method == 2) .or. (method==3))then
+      allkmax=ceiling(real(sqrt(2.d0)/3*min(ia,ja,ka))/dk)
+    endif
+    !
+    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,",ka:",ka,"knumber:",allkmax
+    !
     call fftw_mpi_init()
     if(mpirank==0)  print *, "fftw_mpi initialized"
-    !
-    allkmax=ceiling(1.d0*min(ia,ja,ka))
-    if(mpirank==0)  print *, "ia:",ia,",ja:",ja,",ka:",ka,"allkmax:",allkmax
-    if(ka==0) stop 'Please use instantspectra2D'
     !
     call mpisizedis_fftw
     if(mpirank==0)  print*, '** mpisizedis & parapp done!'
     !
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
-    !
-    call refcal
-    if(mpirank==0)  print*, '** refcal done!'
     !
     allocate(vel(0:im,0:jm,0:km,1:3), rho(0:im,0:jm,0:km), prs(0:im,0:jm,0:km))
     !
@@ -2121,41 +2056,7 @@ module udf_pp_spectra
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-    do k=1,km
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j,k) = real(i-1,8)
-      else if(i<=ia) then
-        k1(i,j,k) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if(j <= (ja/2+1)) then
-        k2(i,j,k) = real(j-1,8)
-      else if(j<=ja) then
-        k2(i,j,k) = real(j-ja-1,8)
-      else
-        print *,"Error, no wave number possible, j must smaller than ja-1 !"
-      end if
-      !
-      if((k+k0) <= (ka/2+1)) then
-        k3(i,j,k) = real(k+k0-1,8)
-      else if((k+k0)<=ka) then
-        k3(i,j,k) = real(k+k0-ka-1,8)
-      else
-        print *,"Error, no wave number possible, (k+k0) must smaller than ka-1 !"
-      end if
-      !
-    enddo
-    enddo
-    enddo
+    call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
     !
     allocate(ucspe(1:im,1:jm,1:km))
     !
@@ -2182,15 +2083,15 @@ module udf_pp_spectra
       kk=dsqrt(k1(i,j,k)**2+k2(i,j,k)**2+k3(i,j,k)**2+1.d-15)
       !
       ucspe(i,j,k) = k1(i,j,k)/kk * u1spe(i,j,k) + k2(i,j,k)/kk * u2spe(i,j,k) + k3(i,j,k)/kk * u3spe(i,j,k)
-      u1c(i,j,k)=  k1(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k1(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
+      u1c(i,j,k)   =  k1(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k1(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
                 + k1(i,j,k)*k3(i,j,k)/(kk**2) * u3spe(i,j,k)
-      u2c(i,j,k)=  k2(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k2(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
+      u2c(i,j,k)   =  k2(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k2(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
                 + k2(i,j,k)*k3(i,j,k)/(kk**2) * u3spe(i,j,k)
-      u3c(i,j,k)=  k3(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k3(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
+      u3c(i,j,k)   =  k3(i,j,k)*k1(i,j,k)/(kk**2) * u1spe(i,j,k) + k3(i,j,k)*k2(i,j,k)/(kk**2) * u2spe(i,j,k) &
                 + k3(i,j,k)*k3(i,j,k)/(kk**2) * u3spe(i,j,k)
-      u1s(i,j,k)=  u1spe(i,j,k) - u1c(i,j,k)
-      u2s(i,j,k)=  u2spe(i,j,k) - u2c(i,j,k)
-      u3s(i,j,k)=  u3spe(i,j,k) - u3c(i,j,k)
+      u1s(i,j,k)   =  u1spe(i,j,k) - u1c(i,j,k)
+      u2s(i,j,k)   =  u2spe(i,j,k) - u2c(i,j,k)
+      u3s(i,j,k)   =  u3spe(i,j,k) - u3c(i,j,k)
       !
       theta(i,j,k)= CMPLX(0.d0,1.d0,C_INTPTR_T) * (ucspe(i,j,k) * kk)
       !
@@ -2420,18 +2321,17 @@ module udf_pp_spectra
     !
     allocate(Ts(0:allkmax),Tstheta(0:allkmax),Td(0:allkmax),Tdstheta(0:allkmax))
     allocate(Tddtheta(0:allkmax),Tcount(0:allkmax),Tss(0:allkmax),Tdd(0:allkmax))
+    allocate(kn(0:allkmax))
     !
-    do i=0,allkmax
-      Ts(i)= 0.0d0
-      Tstheta(i)= 0.0d0
-      Td(i)= 0.0d0
-      Tddtheta(i)= 0.0d0
-      Tdstheta(i)= 0.0d0
-      Tcount(i)=0
-      Tss(i)=0.d0
-      Tdd(i)=0.d0
-    end do
-    !
+    Ts= 0.0d0
+    Tstheta= 0.0d0
+    Td= 0.0d0
+    Tddtheta= 0.0d0
+    Tdstheta= 0.0d0
+    Tcount=0
+    Tss=0.d0
+    Tdd=0.d0
+    kn=0.d0
     k2Ts = 0.d0
     k2Tc = 0.d0
     Tsall = 0.d0
@@ -2448,411 +2348,207 @@ module udf_pp_spectra
       ky = k2(i,j,k)
       kz = k3(i,j,k)
       kk=dsqrt(kx**2+ky**2+kz**2+1.d-15)
+      kOrdinal = kint(kk,dk,method,lambda)
       !
-      !
-      if(kint(kk,dk)<= allkmax)then
-        Ts(kint(kk,dk)) = Ts(kint(kk,dk)) + &
-                          ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33(i,j,k))) + &
-                          ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33(i,j,k))) + &
-                          ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33(i,j,k)))
-            !
-        Tss(kint(kk,dk)) = Tss(kint(kk,dk)) + &
-                            ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11s(i,j,k))) + &
-                            ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11s(i,j,k))) + &
-                            ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11s(i,j,k))) + &
-                            ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12s(i,j,k))) + &
-                            ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12s(i,j,k))) + &
-                            ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12s(i,j,k))) + &
-                            ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13s(i,j,k))) + &
-                            ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13s(i,j,k))) + &
-                            ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13s(i,j,k))) + &
-                            ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21s(i,j,k))) + &
-                            ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21s(i,j,k))) + &
-                            ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21s(i,j,k))) + &
-                            ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22s(i,j,k))) + &
-                            ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22s(i,j,k))) + &
-                            ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22s(i,j,k))) + &
-                            ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23s(i,j,k))) + &
-                            ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23s(i,j,k))) + &
-                            ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23s(i,j,k))) + &
-                            ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31s(i,j,k))) + &
-                            ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31s(i,j,k))) + &
-                            ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31s(i,j,k))) + &
-                            ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32s(i,j,k))) + &
-                            ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32s(i,j,k))) + &
-                            ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32s(i,j,k))) + &
-                            ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33s(i,j,k))) + &
-                            ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33s(i,j,k))) + &
-                            ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33s(i,j,k)))
-              !
-        Tstheta(kint(kk,dk)) = Tstheta(kint(kk,dk)) + &
-                                ProjectP2(1,1,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
-                                ProjectP2(1,2,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
-                                ProjectP2(1,3,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k))) + &
-                                ProjectP2(2,1,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
-                                ProjectP2(2,2,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
-                                ProjectP2(2,3,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k))) + &
-                                ProjectP2(3,1,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
-                                ProjectP2(3,2,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
-                                ProjectP2(3,3,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k)))
-            !
-        Td(kint(kk,dk)) = Td(kint(kk,dk)) + &
-                          ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11(i,j,k))) + &
-                          ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12(i,j,k))) + &
-                          ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13(i,j,k))) + &
-                          ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21(i,j,k))) + &
-                          ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22(i,j,k))) + &
-                          ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23(i,j,k))) + &
-                          ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31(i,j,k))) + &
-                          ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32(i,j,k))) + &
-                          ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33(i,j,k))) + &
-                          ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33(i,j,k))) + &
-                          ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33(i,j,k)))
-          !
-        Tdd(kint(kk,dk)) = Tdd(kint(kk,dk)) + &
-                            ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11d(i,j,k))) + &
-                            ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11d(i,j,k))) + &
-                            ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11d(i,j,k))) + &
-                            ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12d(i,j,k))) + &
-                            ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12d(i,j,k))) + &
-                            ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12d(i,j,k))) + &
-                            ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13d(i,j,k))) + &
-                            ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13d(i,j,k))) + &
-                            ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13d(i,j,k))) + &
-                            ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21d(i,j,k))) + &
-                            ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21d(i,j,k))) + &
-                            ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21d(i,j,k))) + &
-                            ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22d(i,j,k))) + &
-                            ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22d(i,j,k))) + &
-                            ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22d(i,j,k))) + &
-                            ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23d(i,j,k))) + &
-                            ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23d(i,j,k))) + &
-                            ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23d(i,j,k))) + &
-                            ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31d(i,j,k))) + &
-                            ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31d(i,j,k))) + &
-                            ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31d(i,j,k))) + &
-                            ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32d(i,j,k))) + &
-                            ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32d(i,j,k))) + &
-                            ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32d(i,j,k))) + &
-                            ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33d(i,j,k))) + &
-                            ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33d(i,j,k))) + &
-                            ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33d(i,j,k)))
-            !
-        Tdstheta(kint(kk,dk)) = Tdstheta(kint(kk,dk)) + &
-                                ProjectPi2(1,1,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
-                                ProjectPi2(1,2,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
-                                ProjectPi2(1,3,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta3(i,j,k))) + &
-                                ProjectPi2(2,1,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
-                                ProjectPi2(2,2,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
-                                ProjectPi2(2,3,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta3(i,j,k))) + &
-                                ProjectPi2(3,1,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
-                                ProjectPi2(3,2,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
-                                ProjectPi2(3,3,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta3(i,j,k)))
-                                !
-        Tddtheta(kint(kk,dk)) = Tddtheta(kint(kk,dk)) + &
-                                ProjectPi2(1,1,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
-                                ProjectPi2(1,2,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
-                                ProjectPi2(1,3,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta3(i,j,k))) + &
-                                ProjectPi2(2,1,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
-                                ProjectPi2(2,2,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
-                                ProjectPi2(2,3,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta3(i,j,k))) + &
-                                ProjectPi2(3,1,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
-                                ProjectPi2(3,2,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
-                                ProjectPi2(3,3,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta3(i,j,k)))
-        Tcount(kint(kk,dk)) = Tcount(kint(kk,dk))+1
-      endif
-      Tsall = Tsall + ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33(i,j,k))) + &
-                      ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33(i,j,k))) + &
-                      ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33(i,j,k)))
-      !
-      Tssall=Tssall + ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11s(i,j,k))) + &
-                      ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11s(i,j,k))) + &
-                      ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11s(i,j,k))) + &
-                      ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12s(i,j,k))) + &
-                      ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12s(i,j,k))) + &
-                      ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12s(i,j,k))) + &
-                      ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13s(i,j,k))) + &
-                      ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13s(i,j,k))) + &
-                      ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13s(i,j,k))) + &
-                      ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21s(i,j,k))) + &
-                      ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21s(i,j,k))) + &
-                      ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21s(i,j,k))) + &
-                      ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22s(i,j,k))) + &
-                      ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22s(i,j,k))) + &
-                      ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22s(i,j,k))) + &
-                      ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23s(i,j,k))) + &
-                      ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23s(i,j,k))) + &
-                      ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23s(i,j,k))) + &
-                      ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31s(i,j,k))) + &
-                      ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31s(i,j,k))) + &
-                      ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31s(i,j,k))) + &
-                      ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32s(i,j,k))) + &
-                      ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32s(i,j,k))) + &
-                      ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32s(i,j,k))) + &
-                      ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33s(i,j,k))) + &
-                      ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33s(i,j,k))) + &
-                      ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33s(i,j,k)))
-      !
-      Tcall = Tcall + ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11(i,j,k))) + &
-                      ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12(i,j,k))) + &
-                      ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13(i,j,k))) + &
-                      ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21(i,j,k))) + &
-                      ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22(i,j,k))) + &
-                      ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23(i,j,k))) + &
-                      ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31(i,j,k))) + &
-                      ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32(i,j,k))) + &
-                      ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33(i,j,k))) + &
-                      ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33(i,j,k))) + &
-                      ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33(i,j,k)))
-      !
-      Tccall=Tccall + ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11d(i,j,k))) + &
-                      ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11d(i,j,k))) + &
-                      ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11d(i,j,k))) + &
-                      ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12d(i,j,k))) + &
-                      ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12d(i,j,k))) + &
-                      ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12d(i,j,k))) + &
-                      ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13d(i,j,k))) + &
-                      ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13d(i,j,k))) + &
-                      ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13d(i,j,k))) + &
-                      ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21d(i,j,k))) + &
-                      ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21d(i,j,k))) + &
-                      ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21d(i,j,k))) + &
-                      ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22d(i,j,k))) + &
-                      ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22d(i,j,k))) + &
-                      ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22d(i,j,k))) + &
-                      ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23d(i,j,k))) + &
-                      ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23d(i,j,k))) + &
-                      ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23d(i,j,k))) + &
-                      ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31d(i,j,k))) + &
-                      ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31d(i,j,k))) + &
-                      ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31d(i,j,k))) + &
-                      ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32d(i,j,k))) + &
-                      ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32d(i,j,k))) + &
-                      ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32d(i,j,k))) + &
-                      ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33d(i,j,k))) + &
-                      ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33d(i,j,k))) + &
-                      ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33d(i,j,k)))
-      !
-      k2Ts = k2Ts + kk**2 * ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33(i,j,k)))
-      !
-      k2Tss=k2Tss + kk**2 * ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32s(i,j,k))) + &
-                    kk**2 * ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33s(i,j,k))) + &
-                    kk**2 * ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33s(i,j,k))) + &
-                    kk**2 * ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33s(i,j,k)))
-
-      k2Tc =  k2Tc+ kk**2 * ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33(i,j,k)))
-      !
-      k2Tcc=k2Tcc + kk**2 * ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32d(i,j,k))) + &
-                    kk**2 * ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33d(i,j,k))) + &
-                    kk**2 * ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33d(i,j,k))) + &
-                    kk**2 * ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33d(i,j,k)))
+      TsO         = ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33(i,j,k))) + &
+                    ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33(i,j,k))) + &
+                    ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33(i,j,k)))
+        !
+      TssO       =  ProjectP3(1,1,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T11s(i,j,k))) + &
+                    ProjectP3(2,1,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T11s(i,j,k))) + &
+                    ProjectP3(3,1,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T11s(i,j,k))) + &
+                    ProjectP3(1,1,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T12s(i,j,k))) + &
+                    ProjectP3(2,1,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T12s(i,j,k))) + &
+                    ProjectP3(3,1,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T12s(i,j,k))) + &
+                    ProjectP3(1,1,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T13s(i,j,k))) + &
+                    ProjectP3(2,1,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T13s(i,j,k))) + &
+                    ProjectP3(3,1,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T13s(i,j,k))) + &
+                    ProjectP3(1,2,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T21s(i,j,k))) + &
+                    ProjectP3(2,2,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T21s(i,j,k))) + &
+                    ProjectP3(3,2,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T21s(i,j,k))) + &
+                    ProjectP3(1,2,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T22s(i,j,k))) + &
+                    ProjectP3(2,2,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T22s(i,j,k))) + &
+                    ProjectP3(3,2,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T22s(i,j,k))) + &
+                    ProjectP3(1,2,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T23s(i,j,k))) + &
+                    ProjectP3(2,2,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T23s(i,j,k))) + &
+                    ProjectP3(3,2,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T23s(i,j,k))) + &
+                    ProjectP3(1,3,1,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T31s(i,j,k))) + &
+                    ProjectP3(2,3,1,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T31s(i,j,k))) + &
+                    ProjectP3(3,3,1,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T31s(i,j,k))) + &
+                    ProjectP3(1,3,2,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T32s(i,j,k))) + &
+                    ProjectP3(2,3,2,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T32s(i,j,k))) + &
+                    ProjectP3(3,3,2,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T32s(i,j,k))) + &
+                    ProjectP3(1,3,3,kx,ky,kz) * dimag(u1s(i,j,k)*conjg(T33s(i,j,k))) + &
+                    ProjectP3(2,3,3,kx,ky,kz) * dimag(u2s(i,j,k)*conjg(T33s(i,j,k))) + &
+                    ProjectP3(3,3,3,kx,ky,kz) * dimag(u3s(i,j,k)*conjg(T33s(i,j,k)))
+        !
+      TsthetaO    = ProjectP2(1,1,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
+                    ProjectP2(1,2,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
+                    ProjectP2(1,3,kx,ky,kz) * dreal(u1s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k))) + &
+                    ProjectP2(2,1,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
+                    ProjectP2(2,2,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
+                    ProjectP2(2,3,kx,ky,kz) * dreal(u2s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k))) + &
+                    ProjectP2(3,1,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta1(i,j,k)+Tdtheta1(i,j,k))) + &
+                    ProjectP2(3,2,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta2(i,j,k)+Tdtheta2(i,j,k))) + &
+                    ProjectP2(3,3,kx,ky,kz) * dreal(u3s(i,j,k)*conjg(Tstheta3(i,j,k)+Tdtheta3(i,j,k)))
+        !
+      TdO         = ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11(i,j,k))) + &
+                    ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12(i,j,k))) + &
+                    ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13(i,j,k))) + &
+                    ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21(i,j,k))) + &
+                    ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22(i,j,k))) + &
+                    ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23(i,j,k))) + &
+                    ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31(i,j,k))) + &
+                    ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32(i,j,k))) + &
+                    ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33(i,j,k))) + &
+                    ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33(i,j,k))) + &
+                    ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33(i,j,k)))
+        !
+      TddO        = ProjectPi3(1,1,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T11d(i,j,k))) + &
+                    ProjectPi3(2,1,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T11d(i,j,k))) + &
+                    ProjectPi3(3,1,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T11d(i,j,k))) + &
+                    ProjectPi3(1,1,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T12d(i,j,k))) + &
+                    ProjectPi3(2,1,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T12d(i,j,k))) + &
+                    ProjectPi3(3,1,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T12d(i,j,k))) + &
+                    ProjectPi3(1,1,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T13d(i,j,k))) + &
+                    ProjectPi3(2,1,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T13d(i,j,k))) + &
+                    ProjectPi3(3,1,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T13d(i,j,k))) + &
+                    ProjectPi3(1,2,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T21d(i,j,k))) + &
+                    ProjectPi3(2,2,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T21d(i,j,k))) + &
+                    ProjectPi3(3,2,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T21d(i,j,k))) + &
+                    ProjectPi3(1,2,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T22d(i,j,k))) + &
+                    ProjectPi3(2,2,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T22d(i,j,k))) + &
+                    ProjectPi3(3,2,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T22d(i,j,k))) + &
+                    ProjectPi3(1,2,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T23d(i,j,k))) + &
+                    ProjectPi3(2,2,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T23d(i,j,k))) + &
+                    ProjectPi3(3,2,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T23d(i,j,k))) + &
+                    ProjectPi3(1,3,1,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T31d(i,j,k))) + &
+                    ProjectPi3(2,3,1,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T31d(i,j,k))) + &
+                    ProjectPi3(3,3,1,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T31d(i,j,k))) + &
+                    ProjectPi3(1,3,2,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T32d(i,j,k))) + &
+                    ProjectPi3(2,3,2,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T32d(i,j,k))) + &
+                    ProjectPi3(3,3,2,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T32d(i,j,k))) + &
+                    ProjectPi3(1,3,3,kx,ky,kz) * dimag(u1c(i,j,k)*conjg(T33d(i,j,k))) + &
+                    ProjectPi3(2,3,3,kx,ky,kz) * dimag(u2c(i,j,k)*conjg(T33d(i,j,k))) + &
+                    ProjectPi3(3,3,3,kx,ky,kz) * dimag(u3c(i,j,k)*conjg(T33d(i,j,k)))
+        !
+      TdsthetaO   = ProjectPi2(1,1,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
+                    ProjectPi2(1,2,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
+                    ProjectPi2(1,3,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tstheta3(i,j,k))) + &
+                    ProjectPi2(2,1,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
+                    ProjectPi2(2,2,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
+                    ProjectPi2(2,3,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tstheta3(i,j,k))) + &
+                    ProjectPi2(3,1,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta1(i,j,k))) + &
+                    ProjectPi2(3,2,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta2(i,j,k))) + &
+                    ProjectPi2(3,3,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tstheta3(i,j,k)))
+        !
+      TddthetaO   = ProjectPi2(1,1,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
+                    ProjectPi2(1,2,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
+                    ProjectPi2(1,3,kx,ky,kz) * dreal(u1c(i,j,k)*conjg(Tdtheta3(i,j,k))) + &
+                    ProjectPi2(2,1,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
+                    ProjectPi2(2,2,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
+                    ProjectPi2(2,3,kx,ky,kz) * dreal(u2c(i,j,k)*conjg(Tdtheta3(i,j,k))) + &
+                    ProjectPi2(3,1,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta1(i,j,k))) + &
+                    ProjectPi2(3,2,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta2(i,j,k))) + &
+                    ProjectPi2(3,3,kx,ky,kz) * dreal(u3c(i,j,k)*conjg(Tdtheta3(i,j,k)))
+      if(kOrdinal<= allkmax)then
+        Tcount(kOrdinal)   = Tcount(kOrdinal)   + 1
+        if((method == 1) .or. (method == 2))then
+          Ts(kOrdinal)       = Ts(kOrdinal)       - TsO*kk*kk
+          Tstheta(kOrdinal)  = Tstheta(kOrdinal)  + TsthetaO*kk*kk
+          Td(kOrdinal)       = Td(kOrdinal)       - TdO*kk*kk
+          Tddtheta(kOrdinal) = Tddtheta(kOrdinal) + TddthetaO*kk*kk
+          Tdstheta(kOrdinal) = Tdstheta(kOrdinal) + TdsthetaO*kk*kk
+          Tss(kOrdinal)      = Tss(kOrdinal)      - TssO*kk*kk
+          Tdd(kOrdinal)      = Tdd(kOrdinal)      - TddO*kk*kk
+          kn(kOrdinal)       = kn(kOrdinal)       + kk
+        elseif(method == 3)then
+          Ts(kOrdinal)       = Ts(kOrdinal)       - TsO
+          Tstheta(kOrdinal)  = Tstheta(kOrdinal)  + TsthetaO
+          Td(kOrdinal)       = Td(kOrdinal)       - TdO
+          Tddtheta(kOrdinal) = Tddtheta(kOrdinal) + TddthetaO
+          Tdstheta(kOrdinal) = Tdstheta(kOrdinal) + TdsthetaO
+          Tss(kOrdinal)      = Tss(kOrdinal)      - TssO
+          Tdd(kOrdinal)      = Tdd(kOrdinal)      - TddO
+        endif
+      end if
+      Tsall = Tsall  + TsO
+      Tssall= Tssall + TssO
+      Tcall = Tcall  + TdO
+      Tccall= Tccall + TddO
+      k2Ts  = k2Ts   + kk**2 * TsO
+      k2Tss = k2Tss  + kk**2 * TssO
+      k2Tc  = k2Tc   + kk**2 * TdO
+      k2Tcc = k2Tcc  + kk**2 * TddO
     enddo
     enddo
     enddo
     !
     do i=0,allkmax
-      Ts(i) = - psum(Ts(i))
+      Ts(i) = psum(Ts(i))
       Tstheta(i) = psum(Tstheta(i))
-      Td(i) = -psum(Td(i))
+      Td(i) = psum(Td(i))
       Tdstheta(i) = psum(Tdstheta(i))
       Tddtheta(i) = psum(Tddtheta(i))
-      Tss(i) = -psum(Tss(i))
-      Tdd(i) = -psum(Tdd(i))
+      Tss(i) = psum(Tss(i))
+      Tdd(i) = psum(Tdd(i))
       Tcount(i) = psum(Tcount(i))
+      if((method == 1) .or. (method == 2))then
+        kn(i) = psum(kn(i))
+        if(Tcount(i) .ne. 0)then
+          Ts(i) = Ts(i)/Tcount(i)*4*pi
+          Tstheta(i) = Tstheta(i)/Tcount(i)*4*pi
+          Td(i) = Td(i)/Tcount(i)*4*pi
+          Tdstheta(i) = Tdstheta(i)/Tcount(i)*4*pi
+          Tddtheta(i) = Tddtheta(i)/Tcount(i)*4*pi
+          Tss(i) = Tss(i)/Tcount(i)*4*pi
+          Tdd(i) = Tdd(i)/Tcount(i)*4*pi
+          kn(i) = kn(i)/tcount(i)
+        endif
+      else
+        kn(i) = real(i)
+      endif
     end do
-    !
-    if(present(avg) .and. avg)then
-        do i=0,allkmax
-            if(Tcount(i) .ne. 0) then
-              Ts(i) = Ts(i)/Tcount(i)*4*pi
-              Tss(i) = Tss(i)/Tcount(i)*4*pi
-              Tstheta(i) = Tstheta(i)/Tcount(i)*4*pi
-              Td(i) = Td(i)/Tcount(i)*4*pi
-              Tdd(i) = Tdd(i)/Tcount(i)*4*pi
-              Tddtheta(i) = Tddtheta(i)/Tcount(i)*4*pi
-              Tdstheta(i) = Tdstheta(i)/Tcount(i)*4*pi
-            endif
-        enddo
-        if(mpirank==0)  print*, '** Do avgerage'
-    endif
     !
     Tsall = psum(Tsall)
     Tcall = psum(Tcall)
@@ -2862,6 +2558,8 @@ module udf_pp_spectra
     Tccall = psum(Tccall)
     k2Tss = psum(k2Tss)
     k2Tcc = psum(k2Tcc)
+    !
+    if(mpirank==0)  print*, '** Summation & average'
     !
     if(mpirank == 0) then
       if (thefilenumb .ne. 0) then
@@ -2873,7 +2571,7 @@ module udf_pp_spectra
       call listinit(filename=outfilename,handle=hand_a, &
                         firstline='nstep time k Ts Tss Tstheta Td Tdd Tdstheta Tddtheta')
       do i=0,allkmax
-        call listwrite(hand_a,dble(i),Ts(i), Tss(i),Tstheta(i),Td(i),Tdd(i),Tdstheta(i),Tddtheta(i))
+        if(Tcount(i)>1e-3) call listwrite(hand_a,kn(i),Ts(i),Tss(i),Tstheta(i),Td(i),Tdd(i),Tdstheta(i),Tddtheta(i))
       end do
       !
       print*,' <<< '//outfilename//'... done.'
@@ -2977,6 +2675,9 @@ module udf_pp_spectra
     !
     call readinput
     !
+    call refcal
+    if(mpirank==0)  print*, '** refcal done!'
+    !
     modeio='h'
     !
     call fftw_mpi_init()
@@ -2991,9 +2692,6 @@ module udf_pp_spectra
     !
     call parallelini
     if(mpirank==0)  print*, '** parallelini done!'
-    !
-    call refcal
-    if(mpirank==0)  print*, '** refcal done!'
     !
     allocate(vel(0:im,0:jm,0:km,1:2), rho(0:im,0:jm,0:km))
     !
@@ -3073,31 +2771,7 @@ module udf_pp_spectra
     !
     ! Wavenumber calculation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      if(im .ne. ia)then
-        stop "error! im /= ia"
-      endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     c_u11 = fftw_alloc_complex(alloc_local)
     call c_f_pointer(c_u11, u11, [imfftw,jmfftw])
@@ -3208,249 +2882,5 @@ module udf_pp_spectra
     !
   end subroutine instantspectraskewness2D
   !
-    !
-  real(8) function wav(i,im)
-  ! This function gives the wave number of index i
-  ! with the maximum im
-    implicit none
-    integer, intent(in) :: i, im
-    !
-    if(i <= (im/2+1)) then
-      wav = real(i-1,8)
-    else if(i<=im) then
-      wav = real(i-im-1,8)
-    else
-      print *,"Error, no wave number possible, i must smaller than im !"
-    end if
-  end function wav
-  !
-  integer function invwav(i,im)
-  ! This function gives the wave number of index i
-  ! with the maximum im
-    implicit none
-    integer, intent(in) :: i,im
-    !
-    if(i < 0) then
-      invwav = i + im + 1;
-    else
-      invwav = i + 1;
-    end if
-  end function invwav
-  !
-  integer function kint(k,dk)
-  ! This function gives the nearby k
-  !!
-    implicit none
-    real(8), intent(in) :: k,dk
-    !
-    if(nint(k)>=k-dk) then
-      kint = nint(k)
-    else if(nint(k)+1<=k+dk) then
-      kint = nint(k)+1
-    else
-      print *,"error in kint!"
-      kint = 0
-    end if
-  end function kint
-  !
-  real(8) function ProjectP2_2D(i,j,kx,ky)
-    !
-    !!
-    implicit none
-    integer, intent(in) :: i,j
-    real(8), intent(in) ::kx,ky
-    real(8) :: k
-    !
-    k = dsqrt(kx**2+ky**2+1.d-15)
-    !
-    if((i .eq. 1) .and. (j .eq. 1)) then
-      ProjectP2_2D = 1.d0 - kx*kx/k/k
-    else if((i .eq. 1) .and. (j .eq. 2)) then
-      ProjectP2_2D = - kx*ky/k/k
-    else if((i .eq. 2) .and. (j .eq. 1)) then
-      ProjectP2_2D = - kx*ky/k/k
-    else if((i .eq. 2) .and. (j .eq. 2)) then
-      ProjectP2_2D = 1.d0 - ky*ky/k/k
-    else
-      stop "ProjectP2_2D error: i,j"
-    end if
-    !
-  end function ProjectP2_2D
-  !
-  real(8) function ProjectP2_3D(i,j,kx,ky,kz)
-  !
-  !!
-  implicit none
-  integer, intent(in) :: i,j
-  real(8), intent(in) :: kx,ky,kz
-  real(8) :: k
-  !
-  k = dsqrt(kx**2+ky**2+kz**2+1.d-15)
-  !
-  if((i .eq. 1) .and. (j .eq. 1)) then
-    ProjectP2_3D = 1.d0 - kx*kx/k/k
-  else if((i .eq. 1) .and. (j .eq. 2)) then
-    ProjectP2_3D = - kx*ky/k/k
-  else if((i .eq. 1) .and. (j .eq. 3)) then
-    ProjectP2_3D = - kx*kz/k/k
-  else if((i .eq. 2) .and. (j .eq. 1)) then
-    ProjectP2_3D = - ky*kx/k/k
-  else if((i .eq. 2) .and. (j .eq. 2)) then
-    ProjectP2_3D = 1.d0 - ky*ky/k/k
-  else if((i .eq. 2) .and. (j .eq. 3)) then
-    ProjectP2_3D = - ky*kz/k/k
-  else if((i .eq. 3) .and. (j .eq. 1)) then
-    ProjectP2_3D = - kz*kx/k/k
-  else if((i .eq. 3) .and. (j .eq. 2)) then
-    ProjectP2_3D = - kz*ky/k/k
-  else if((i .eq. 3) .and. (j .eq. 3)) then
-    ProjectP2_3D = 1.d0 - kz*kz/k/k
-  else
-    stop "ProjectP2_3D error: i,j"
-  end if
-  !
-  end function ProjectP2_3D
-  !
-  real(8) function ProjectP3_2D(i,j,m,kx,ky)
-    !
-    !!
-    implicit none
-    integer, intent(in) :: i,j,m
-    real(8), intent(in) :: kx,ky
-    !
-    if((j .eq. 1) .and. (m .eq. 1))then
-      ProjectP3_2D = 0.5d0 * kx * ProjectP2(i,j,kx,ky)+ 0.5d0 * kx * ProjectP2(i,m,kx,ky)
-    else if((j .eq. 2) .and. (m .eq. 1))then
-      ProjectP3_2D = 0.5d0 * kx * ProjectP2(i,j,kx,ky)+ 0.5d0 * ky * ProjectP2(i,m,kx,ky)
-    else if((j .eq. 1) .and. (m .eq. 2))then
-      ProjectP3_2D = 0.5d0 * ky * ProjectP2(i,j,kx,ky)+ 0.5d0 * kx * ProjectP2(i,m,kx,ky)
-    else if((j .eq. 2) .and. (m .eq. 2))then
-      ProjectP3_2D = 0.5d0 * ky * ProjectP2(i,j,kx,ky)+ 0.5d0 * ky * ProjectP2(i,m,kx,ky)
-    else
-      stop "ProjectP3_2D error: j,m"
-    endif
-  end function ProjectP3_2D
-  !
-  real(8) function ProjectP3_3D(i,j,m,kx,ky,kz)
-  !
-  !!
-  implicit none
-  integer, intent(in) :: i,j,m
-  real(8), intent(in) :: kx,ky,kz
-  !
-  if((j .eq. 1) .and. (m .eq. 1))then
-    ProjectP3_3D = 0.5d0 * kx * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kx * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 2) .and. (m .eq. 1))then
-    ProjectP3_3D = 0.5d0 * kx * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * ky * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 3) .and. (m .eq. 1))then
-    ProjectP3_3D = 0.5d0 * kx * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kz * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 1) .and. (m .eq. 2))then
-    ProjectP3_3D = 0.5d0 * ky * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kx * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 2) .and. (m .eq. 2))then
-    ProjectP3_3D = 0.5d0 * ky * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * ky * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 3) .and. (m .eq. 2))then
-    ProjectP3_3D = 0.5d0 * ky * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kz * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 1) .and. (m .eq. 3))then
-    ProjectP3_3D = 0.5d0 * kz * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kx * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 2) .and. (m .eq. 3))then
-    ProjectP3_3D = 0.5d0 * kz * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * ky * ProjectP2(i,m,kx,ky,kz)
-  else if((j .eq. 3) .and. (m .eq. 3))then
-    ProjectP3_3D = 0.5d0 * kz * ProjectP2(i,j,kx,ky,kz)+ 0.5d0 * kz * ProjectP2(i,m,kx,ky,kz)
-  else
-    stop "ProjectP3_3D error: j,m"
-  endif
-  end function ProjectP3_3D
-  !
-  real(8) function ProjectPi2_2D(i,j,kx,ky)
-    !
-    !!
-    implicit none
-    integer, intent(in) :: i,j
-    real(8), intent(in) :: kx,ky
-    real(8) :: k
-    !
-    k = dsqrt(kx**2+ky**2+1.d-15)
-    !
-    if((i .eq. 1) .and. (j .eq. 1)) then
-      ProjectPi2_2D = kx*kx/k/k
-    else if((i .eq. 1) .and. (j .eq. 2)) then
-      ProjectPi2_2D = kx*ky/k/k
-    else if((i .eq. 2) .and. (j .eq. 1)) then
-      ProjectPi2_2D = kx*ky/k/k
-    else if((i .eq. 2) .and. (j .eq. 2)) then
-      ProjectPi2_2D = ky*ky/k/k
-    else
-      stop "ProjectPi2_2D error: i,j"
-    end if
-    !
-  end function ProjectPi2_2D
-  !
-  real(8) function ProjectPi2_3D(i,j,kx,ky,kz)
-  !
-  !!
-  implicit none
-  integer, intent(in) :: i,j
-  real(8), intent(in) :: kx,ky,kz
-  real(8) :: k
-  !
-  k = dsqrt(kx**2+ky**2+kz**2+1.d-15)
-  !
-  if((i .eq. 1) .and. (j .eq. 1)) then
-    ProjectPi2_3D = kx*kx/k/k
-  else if((i .eq. 1) .and. (j .eq. 2)) then
-    ProjectPi2_3D = kx*ky/k/k
-  else if((i .eq. 1) .and. (j .eq. 3)) then
-    ProjectPi2_3D = kx*kz/k/k
-  else if((i .eq. 2) .and. (j .eq. 1)) then
-    ProjectPi2_3D = ky*kx/k/k
-  else if((i .eq. 2) .and. (j .eq. 2)) then
-    ProjectPi2_3D = ky*ky/k/k
-  else if((i .eq. 2) .and. (j .eq. 3)) then
-    ProjectPi2_3D = ky*kz/k/k
-  else if((i .eq. 3) .and. (j .eq. 1)) then
-    ProjectPi2_3D = kz*kx/k/k
-  else if((i .eq. 3) .and. (j .eq. 2)) then
-    ProjectPi2_3D = kz*ky/k/k
-  else if((i .eq. 3) .and. (j .eq. 3)) then
-    ProjectPi2_3D = kz*kz/k/k
-  else
-    stop "ProjectPi2_3D error: i,j"
-  end if
-  !
-  end function ProjectPi2_3D
-  !
-  real(8) function ProjectPi3_2D(i,j,m,kx,ky)
-    !
-    !!
-    implicit none
-    integer, intent(in) :: i,j,m
-    real(8), intent(in) :: kx,ky
-    !
-    if(m .eq. 1)then
-      ProjectPi3_2D = kx * ProjectP2(i,j,kx,ky)
-    else if(m .eq. 2)then
-      ProjectPi3_2D = ky * ProjectP2(i,j,kx,ky)
-    else
-      stop "ProjectPi3_2D error: m"
-    endif
-  end function ProjectPi3_2D
-  !
-  real(8) function ProjectPi3_3D(i,j,m,kx,ky,kz)
-    !
-    !!
-    implicit none
-    integer, intent(in) :: i,j,m
-    real(8), intent(in) :: kx,ky,kz
-    !
-    if(m .eq. 1)then
-      ProjectPi3_3D = kx * ProjectP2(i,j,kx,ky,kz)
-    else if(m .eq. 2)then
-      ProjectPi3_3D = ky * ProjectP2(i,j,kx,ky,kz)
-    else if(m .eq. 3)then
-      ProjectPi3_3D = kz * ProjectP2(i,j,kx,ky,kz)
-    else
-      stop "ProjectPi3_3D error: m"
-    endif
-  end function ProjectPi3_3D
   !
 end module udf_pp_spectra

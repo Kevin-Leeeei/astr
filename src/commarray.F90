@@ -11,7 +11,8 @@ module commarray
   !
   implicit none
   !
-  real(8),allocatable,dimension(:,:,:,:) :: x,q,qrhs,vel,spc,dtmp,dgrid,vor,dvor
+  real(8),allocatable,dimension(:,:,:,:) :: x,q,qrhs,vel,spc,dtmp,     &
+                                            dgrid,vor,dvor, forcep
   real(8),allocatable,dimension(:,:,:) :: jacob,rho,prs,tmp,vorbis
   real(8),allocatable,dimension(:,:,:,:,:) :: dxi,dvel,dspc
   real(8),allocatable,dimension(:,:,:) :: bnorm_i0,bnorm_im,bnorm_j0,  &
@@ -30,7 +31,8 @@ module commarray
   real(8),allocatable,dimension(:,:,:) :: tke,omg,miut,res12,ssf
   real(8),allocatable,dimension(:,:,:,:) :: dtke,domg
   !
-  real(8),allocatable,dimension(:) :: Ak,phik
+  integer,allocatable,dimension(:) :: forcek
+  real(8),allocatable,dimension(:) :: forcespes,forcesped
   !
   !+---------------------+---------------------------------------------+
   !|                   x | coordinates.                                |
@@ -114,6 +116,9 @@ module commarray
     !
     allocate(crinod(0:im,0:jm,0:km),stat=lallo)
     if(lallo.ne.0) stop ' !! error at allocating crinod'
+    !
+    allocate( forcep(-hm:im+hm,-hm:jm+hm,-hm:km+hm,1:3),stat=lallo)
+    if(lallo.ne.0) stop ' !! error at allocating forcep'
     !
   end subroutine allocommarray
   !+-------------------------------------------------------------------+

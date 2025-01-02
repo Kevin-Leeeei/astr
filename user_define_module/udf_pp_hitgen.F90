@@ -1,6 +1,6 @@
 !+---------------------------------------------------------------------+
 !| This module contains subroutines for post-process concerning        |
-!| physical SGS method for energy flux calculation.                    |
+!| initial field generating.                                           |
 !+---------------------------------------------------------------------+
 !| ==============                                                      |
 !| CHANGE RECORD                                                       |
@@ -12,6 +12,7 @@ module udf_pp_hitgen
     !
     use constdef
     use stlaio,  only: get_unit
+    use udf_tool, only: GenerateWave
     !
     implicit none
     !
@@ -332,43 +333,7 @@ module udf_pp_hitgen
     !
     !! wavenumber generation
     allocate(k1(1:im,1:jm,1:km),k2(1:im,1:jm,1:km),k3(1:im,1:jm,1:km))
-    do k=1,km
-    do j=1,jm
-    do i=1,im
-      !
-      ! if(jm .ne. ja)then
-      !   stop "error! jm /= ja"
-      ! endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j,k) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j,k) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if(j <= (ja/2+1)) then
-        k2(i,j,k) = real(j-1,8)
-      else if(j<=ja) then
-        k2(i,j,k) = real(j-ja-1,8)
-      else
-        print *,"Error, no wave number possible, j must smaller than ja-1 !"
-      end if
-      !
-      !
-      if((k+k0) <= (ka/2+1)) then
-        k3(i,j,k) = real(k+k0-1,8)
-      else if((k+k0)<=(ka)) then
-        k3(i,j,k) = real(k+k0-ka-1,8)
-      else
-        print *,"Error, no wave number possible, (k+k0) must smaller than ka-1 !"
-      end if
-      !
-      !
-    end do
-    end do
-    end do
+    call GenerateWave(im,jm,km,ia,ja,ka,k0f,k1,k2,k3)
     !
     !! complex speed allocation
     c_u1c = fftw_alloc_complex(alloc_local)
@@ -537,7 +502,7 @@ module udf_pp_hitgen
     !
     call h5io_init(trim('datin/flowini3d.h5'),mode='write')
     !
-    if((k0+km)==ka)then
+    if((k0f+km)==ka)then
       call h5write(var=rho(0:im,0:jm,0:km),  varname='ro', mode = modeio) 
       call h5write(var=vel(0:im,0:jm,0:km,1),varname='u1', mode = modeio)
       call h5write(var=vel(0:im,0:jm,0:km,2),varname='u2', mode = modeio)
@@ -748,31 +713,7 @@ module udf_pp_hitgen
     !
     !! wavenumber generation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      ! if(jm .ne. ja)then
-      !   stop "error! jm /= ja"
-      ! endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     !! complex speed allocation
     c_u1c = fftw_alloc_complex(alloc_local)
@@ -879,7 +820,7 @@ module udf_pp_hitgen
     ! Output
     call h5io_init(trim('datin/flowini2d.h5'),mode='write')
     !
-    if((j0+jm)==ja)then
+    if((j0f+jm)==ja)then
       call h5wa2d_r8(varname='ro',var=rho(0:im,0:jm,0),  dir='k')
       call h5wa2d_r8(varname='u1',var=vel(0:im,0:jm,0,1),dir='k')
       call h5wa2d_r8(varname='u2',var=vel(0:im,0:jm,0,2),dir='k')
@@ -1008,31 +949,7 @@ module udf_pp_hitgen
     !
     !! wavenumber generation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      ! if(jm .ne. ja)then
-      !   stop "error! jm /= ja"
-      ! endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     !! complex speed allocation
     c_u1c = fftw_alloc_complex(alloc_local)
@@ -1143,7 +1060,7 @@ module udf_pp_hitgen
     ! Output
     call h5io_init(trim('datin/flowini2d.h5'),mode='write')
     !
-    if((j0+jm)==ja)then
+    if((j0f+jm)==ja)then
       call h5wa2d_r8(varname='ro',var=rho(0:im,0:jm,0),  dir='k')
       call h5wa2d_r8(varname='u1',var=vel(0:im,0:jm,0,1),dir='k')
       call h5wa2d_r8(varname='u2',var=vel(0:im,0:jm,0,2),dir='k')
@@ -1270,31 +1187,7 @@ module udf_pp_hitgen
     !
     !! wavenumber generation
     allocate(k1(1:im,1:jm),k2(1:im,1:jm))
-    do j=1,jm
-    do i=1,im
-      !
-      ! if(jm .ne. ja)then
-      !   stop "error! jm /= ja"
-      ! endif
-      !
-      if(i <= (ia/2+1)) then
-        k1(i,j) = real(i-1,8)
-      else if(i<=(ia)) then
-        k1(i,j) = real(i-ia-1,8)
-      else
-        print *,"Error, no wave number possible, i must smaller than ia-1 !"
-      end if
-      !
-      if((j+j0) <= (ja/2+1)) then
-        k2(i,j) = real(j+j0-1,8)
-      else if((j+j0)<=(ja)) then
-        k2(i,j) = real(j+j0-ja-1,8)
-      else
-        print *,"Error, no wave number possible, (j+jm) must smaller than ja-1 !"
-      end if
-      !
-    end do
-    end do
+    call GenerateWave(im,jm,ia,ja,j0f,k1,k2)
     !
     !! complex speed allocation
     c_u1c = fftw_alloc_complex(alloc_local)
@@ -1401,7 +1294,7 @@ module udf_pp_hitgen
     ! Output
     call h5io_init(trim('datin/flowini2d.h5'),mode='write')
     !
-    if((j0+jm)==ja)then
+    if((j0f+jm)==ja)then
       call h5wa2d_r8(varname='ro',var=rho(0:im,0:jm,0),  dir='k')
       call h5wa2d_r8(varname='u1',var=vel(0:im,0:jm,0,1),dir='k')
       call h5wa2d_r8(varname='u2',var=vel(0:im,0:jm,0,2),dir='k')
