@@ -34,7 +34,10 @@ module pp
     use udf_pp_SGS
     use udf_pp_velgrad
     use udf_pp_spectra
+    use udf_pp_Skewness
     use udf_pp_hitgen
+    use udf_pp_kenergy
+    use udf_specftrans
     use udf_pp_force
     use parallel,        only : mpirank,bcast,mpisize,lio
     use commarray,       only : allocommarray
@@ -148,6 +151,14 @@ module pp
       !
       call ppVelgradentrance
       !
+    elseif(trim(cmd)=='skewnesscal') then
+      !
+      call skewnesscal
+      !
+    elseif(trim(cmd)=='kenergycal') then
+      call kenergycalcu
+    elseif(trim(cmd)=='specftrans') then
+      call specftrans
     elseif(trim(cmd)=='forcetest') then
       !
       call ppForceentrance

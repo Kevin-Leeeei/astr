@@ -4594,7 +4594,7 @@ module parallel
                                          species=spc(-hm:0,0:jm,0:km,:), &
                                              tke=tke(-hm:0,0:jm,0:km),   &
                                            omega=omg(-hm:0,0:jm,0:km)    )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(im:im+hm,0:jm,0:km,:),                         &
                                        density=rho(im:im+hm,0:jm,0:km),  &
                                       velocity=vel(im:im+hm,0:jm,0:km,:),&
@@ -4658,7 +4658,7 @@ module parallel
                                        species=spc(im:im+hm,0:jm,0:km,:),&
                                            tke=tke(im:im+hm,0:jm,0:km),  &
                                          omega=omg(im:im+hm,0:jm,0:km) )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(im:im+hm,0:jm,0:km,:),                         &
                                        density=rho(im:im+hm,0:jm,0:km),  &
                                       velocity=vel(im:im+hm,0:jm,0:km,:),&
@@ -4688,7 +4688,7 @@ module parallel
                                          species=spc(-hm:0,0:jm,0:km,:), &
                                              tke=tke(-hm:0,0:jm,0:km),   &
                                            omega=omg(-hm:0,0:jm,0:km)    )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(-hm:0,0:jm,0:km,:),                            &
                                          density=rho(-hm:0,0:jm,0:km),   &
                                         velocity=vel(-hm:0,0:jm,0:km,:), &
@@ -4740,7 +4740,7 @@ module parallel
                                   species=spc(0:im,jm:jm+hm,0:km,:),   &
                                       tke=tke(0:im,jm:jm+hm,0:km),     &
                                     omega=omg(0:im,jm:jm+hm,0:km)      )
-      elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+      elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
         call q2fvar(q=q(0:im,-hm:0,0:km,:),                            &
                                        density=rho(0:im,-hm:0,0:km),   &
                                       velocity=vel(0:im,-hm:0,0:km,:), &
@@ -4804,7 +4804,7 @@ module parallel
                                          species=spc(0:im,jm:jm+hm,0:km,:),&
                                              tke=tke(0:im,jm:jm+hm,0:km),  &
                                            omega=omg(0:im,jm:jm+hm,0:km)   )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(0:im,jm:jm+hm,0:km,:),                           &
                                          density=rho(0:im,jm:jm+hm,0:km),  &
                                         velocity=vel(0:im,jm:jm+hm,0:km,:),&
@@ -4832,7 +4832,7 @@ module parallel
                                          species=spc(0:im,-hm:0,0:km,:),   &
                                              tke=tke(0:im,-hm:0,0:km),     &
                                            omega=omg(0:im,-hm:0,0:km)      )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(0:im,-hm:0,0:km,:),                              &
                                          density=rho(0:im,-hm:0,0:km),     &
                                         velocity=vel(0:im,-hm:0,0:km,:),   &
@@ -4881,7 +4881,7 @@ module parallel
                                   species=spc(0:im,0:jm,km:km+hm,:),     &
                                       tke=tke(0:im,0:jm,km:km+hm),       &
                                     omega=omg(0:im,0:jm,km:km+hm)      )
-      elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+      elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
         call q2fvar(q=q(0:im,0:jm,-hm:0,:),                              &
                                        density=rho(0:im,0:jm,-hm:0),     &
                                       velocity=vel(0:im,0:jm,-hm:0,:),   &
@@ -4946,7 +4946,7 @@ module parallel
                                     species=spc(0:im,0:jm,km:km+hm,:),   &
                                         tke=tke(0:im,0:jm,km:km+hm),     &
                                       omega=omg(0:im,0:jm,km:km+hm)    )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(0:im,0:jm,km:km+hm,:),                         &
                                     density=rho(0:im,0:jm,km:km+hm),     &
                                    velocity=vel(0:im,0:jm,km:km+hm,:),   &
@@ -4976,7 +4976,7 @@ module parallel
                                          species=spc(0:im,0:jm,-hm:0,:),  &
                                              tke=tke(0:im,0:jm,-hm:0),    &
                                            omega=omg(0:im,0:jm,-hm:0)   )
-        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+        elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
           call q2fvar(q=q(0:im,0:jm,-hm:0,:),                             &
                                          density=rho(0:im,0:jm,-hm:0),    &
                                         velocity=vel(0:im,0:jm,-hm:0,:),  &

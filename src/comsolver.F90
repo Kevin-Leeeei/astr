@@ -36,6 +36,7 @@ module comsolver
     use commfunc,only : coeffcompac,ptds_ini,ptdsfilter_ini,           &
                         ptds_aym_ini,genfilt10coef
     use models,  only : init_komegasst
+    use smag, only:init_smag
     !
     ! local data
     integer :: nscheme,i
@@ -92,6 +93,8 @@ module comsolver
     !
     if(trim(turbmode)=='k-omega') then
       call init_komegasst
+    elseif(trim(turbmode)=='smag') then
+      call init_smag
     endif
     !
     if(lio) print*,' ** numerical solver initilised.'
