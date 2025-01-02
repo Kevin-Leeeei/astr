@@ -225,7 +225,7 @@ module fludyna
       enddo
       enddo
       !
-    elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+    elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1'.or. trim(turbmode)=='smag') then
       !
       call q2fvar(q=q(0:im,0:jm,0:km,:),                               &
                                      density=rho(0:im,0:jm,0:km),      &
@@ -268,7 +268,7 @@ module fludyna
                           tke=tke(0:im,0:jm,0:km),                     &
                         omega=omg(0:im,0:jm,0:km)                      )
       !
-    elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1') then
+    elseif(trim(turbmode)=='none' .or. trim(turbmode)=='udf1' .or. trim(turbmode)=='smag') then
       !
       call fvar2q(          q=  q(0:im,0:jm,0:km,:),                   &
                       density=rho(0:im,0:jm,0:km),                     &

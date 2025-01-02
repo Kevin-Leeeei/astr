@@ -30,7 +30,7 @@ module statistic
   real(8) :: time_sbeg
   real(8) :: enstophy,kenergy,fbcx,massflux,massflux_target,wrms,      &
              wallheatflux,dissipation,nominal_thickness,xflame,vflame, &
-             poutrt
+             poutrt,ksgs
   real(8) :: maxT,overall_qdot,v_H2O,v_HO2
   real(8) :: vel_incom,prs_incom,rho_incom
   real(8) :: umax,rhomax,tmpmax,qdotmax
@@ -566,7 +566,7 @@ module statistic
   !+-------------------------------------------------------------------+
   subroutine statcal(timerept)
     !
-    use commvar,  only : flowtype,voldom
+    use commvar,  only : flowtype,voldom,turbmode
     use commarray,only : vel,prs,rho,tmp,spc,cell,x
     use interp,   only : interlinear
 #ifdef COMB
@@ -584,8 +584,14 @@ module statistic
     if(present(timerept) .and. timerept) time_beg=ptime() 
     !
     if(trim(flowtype)=='tgv' .or. trim(flowtype)=='hit' .or. trim(flowtype)=='hit2d') then
-      enstophy=enstophycal()
-      kenergy =kenergycal()
+      if(trim(turbmode)=='smag') then
+        ksgs=ksgscal()
+        enstophy=enstophycal()
+        kenergy =kenergycal()
+      else 
+        enstophy=enstophycal()
+        kenergy =kenergycal()
+      endif
       !
       if(trim(flowtype)=='hit2d') then
         dissipation=diss_rate_cal2d()
@@ -598,6 +604,7 @@ module statistic
         call turbstats
         !
       endif
+      !
       !
     elseif(trim(flowtype)=='bl' .or. trim(flowtype)=='swbli') then
       fbcx=fbcxbl()
@@ -775,7 +782,7 @@ module statistic
   !+-------------------------------------------------------------------+
   subroutine statout(time_verybegin)
     !
-    use commvar, only : flowtype,nstep,time,maxstep,lrestart,feqlist,uinf
+    use commvar, only : flowtype,turbmode,nstep,time,maxstep,lrestart,feqlist,uinf
     use parallel,only : ptime
     use utility,  only : listinit,listwrite
     !
@@ -796,7 +803,11 @@ module statistic
       if(linit) then
         !
         if(trim(flowtype)=='tgv' .or. trim(flowtype)=='hit' .or. trim(flowtype)=='hit2d') then
-          fstitle='nstep time kenergy enstophy dissipation'
+          if(trim(turbmode)=='smag') then
+            fstitle='nstep time kenergy enstophy dissipation ksgs'
+          else
+            fstitle='nstep time kenergy enstophy dissipation'
+          endif
         elseif(trim(flowtype)=='channel') then
           fstitle='nstep time massflux fbcx forcex wrms'
         elseif(trim(flowtype)=='bl' .or. trim(flowtype)=='swbli') then
@@ -821,7 +832,11 @@ module statistic
       endif
       !
       if(trim(flowtype)=='tgv' .or. trim(flowtype)=='hit' .or. trim(flowtype)=='hit2d') then
-        call listwrite(hand_fs,kenergy,enstophy,dissipation)
+        if(trim(turbmode)=='smag') then
+          call listwrite(hand_fs,kenergy,enstophy,dissipation,ksgs)
+        else
+          call listwrite(hand_fs,kenergy,enstophy,dissipation)
+        endif
       elseif(trim(flowtype)=='channel') then
         call listwrite(hand_fs,massflux,fbcx,force(1),wrms)
       elseif(trim(flowtype)=='bl' .or. trim(flowtype)=='tbl' .or. trim(flowtype)=='swbli') then
@@ -1605,6 +1620,48 @@ module statistic
   !| The end of the subroutine chanfoce.                               |
   !+-------------------------------------------------------------------+
   !!
+  !| This function is to return spatial averaged ksgs for smagorinsky. |
+  !+-------------------------------------------------------------------+
+  !| CHANGE RECORD                                                     |
+  !| -------------                                                     |
+  !| 24-10-2024  | Created by K. Li                                    |
+  function ksgscal() result(vout)
+    !
+    use commvar,   only : im,jm,km,ia,ja,ka,roinf,uinf,turbmode
+    use commarray, only : vel,cell,rho,dvel
+    use commfunc,  only : volhex
+    use smag,      only : smag_model
+    !
+    real(8) :: vout
+    !
+    ! local data
+    integer :: i,j,k
+    real(8) :: var1
+    !
+    vout=0.d0
+    if(trim(turbmode)=='smag') then
+      do k=1,km
+      do j=1,jm
+      do i=1,im
+        ! 
+        var1=smag_model%k_sgs(i,j,k)
+        !
+        vout=vout+rho(i,j,k)*var1
+      enddo
+      enddo
+      enddo
+      !
+      vout=0.5d0*psum(vout)/real(ia*ja*ka,8)
+    endif
+    !
+    vout=vout/(roinf*uinf*uinf)
+    !
+    return
+    !
+  end function ksgscal
+!+---------------------------------------------------------------------+
+!| The end of the fonction ksgscal.                                    |
+!+---------------------------------------------------------------------+
 end module statistic
 !+---------------------------------------------------------------------+
 !| The end of the module statistic.                                    |

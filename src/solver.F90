@@ -2371,6 +2371,7 @@ module solver
     use comsolver, only : alfa_dif,dci,dcj,dck
     use fludyna,   only : miucal
     use models,    only : komega,src_komega
+    use smag,only: smag_model,src_smag
     use tecio
     use parallel,  only : yflux_sendrecv
 #ifdef COMB
@@ -2435,7 +2436,11 @@ module solver
     !
     if(firstcall) firstcall=.false.
     !
-    if(trim(turbmode)=='k-omega') call src_komega
+    if(trim(turbmode)=='k-omega') then
+      call src_komega
+    elseif(trim(turbmode)=='smag') then
+      call src_smag 
+    endif
     !
     do k=0,km
     do j=0,jm
@@ -2500,6 +2505,24 @@ module solver
         !
         dkflux(i,j,k,:)=miu3*dtke(i,j,k,:)
         doflux(i,j,k,:)=miu4*domg(i,j,k,:)
+        !
+      elseif(trim(turbmode)=='smag') then
+        !
+        miu2=2.d0*miu
+        !
+        miu3=2.d0*miut(i,j,k)
+        !
+        hcc=(miu/prandtl+rho(i,j,k)*smag_model%nu_sgs(i,j,k)/0.9d0)/const5
+        !
+        detk=num2d3*smag_model%k_sgs(i,j,k)
+        !
+        tau11=miu3*s11
+        tau12=miu3*s12
+        tau13=miu3*s13
+        tau22=miu3*s22
+        tau23=miu3*s23
+        tau33=miu3*s33
+      !
       elseif(trim(turbmode)=='udf1') then
         !
         ! miu2=2.d0*(miu+miut(i,j,k))
@@ -2662,7 +2685,7 @@ module solver
                     doflux(:,j,k,2)*dxi(:,j,k,1,2) +                   &
                     doflux(:,j,k,3)*dxi(:,j,k,1,3) )*jacob(:,j,k)
       endif
-      !
+      !   
       !+------------------------------+
       !|    calculate derivative      |
       !+------------------------------+

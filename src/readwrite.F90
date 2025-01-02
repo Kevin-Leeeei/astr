@@ -449,6 +449,8 @@ module readwrite
         write(*,'(35X,A)')'          no turbulence model'
       elseif(trim(turbmode)=='k-omega') then
         write(*,'(35X,A)')' the Menter SST k-omega model'
+      elseif(trim(turbmode)=='smag') then
+        write(*,'(35X,A)')' smagorinsky model'
       elseif(trim(turbmode)=='udf1') then
         write(*,'(35X,A)')'         user defined model 1'
       else
@@ -1778,6 +1780,7 @@ module readwrite
     use statistic, only : massflux,massflux_target,nsamples
     use hdf5io
     use bc,        only : ninflowslice
+    use smag,      only:smag_model
 #ifdef COMB
     use thermchem, only: spcindex
 #endif
@@ -1844,6 +1847,9 @@ module readwrite
         call h5read(varname='k',     var=tke(0:im,0:jm,0:km),mode=modeio)
         call h5read(varname='omega', var=omg(0:im,0:jm,0:km),mode=modeio)
         call h5read(varname='miut',  var=miut(0:im,0:jm,0:km),mode=modeio)
+      elseif(trim(turbmode)=='smag') then
+        call h5read(varname='miut',  var=miut(0:im,0:jm,0:km),mode=modeio)
+        call h5read(varname='k_sgs',  var=smag_model%k_sgs(0:im,0:jm,0:km),mode=modeio)
       elseif(trim(turbmode)=='udf1') then
         call h5read(varname='miut',  var=miut(0:im,0:jm,0:km),mode=modeio)
       endif
@@ -2112,6 +2118,7 @@ module readwrite
     use models,   only : tke,omg,miut
     use statistic,only : nsamples,liosta,massflux,massflux_target
     use bc,       only : ninflowslice
+    use smag,     only : smag_model
     use hdf5io
 #ifdef COMB
     use thermchem,only : heatrate
@@ -2201,6 +2208,9 @@ module readwrite
       call h5write(varname='k',     var=tke(0:im,0:jm,0:km),mode=iomode)
       call h5write(varname='omega', var=omg(0:im,0:jm,0:km),mode=iomode)
       call h5write(varname='miut',  var=miut(0:im,0:jm,0:km),mode=iomode)
+    elseif(trim(turbmode)=='smag')then
+      call h5write(varname='miut',  var=miut(0:im,0:jm,0:km),mode=iomode)
+      call h5write(varname='k_sgs',  var=smag_model%k_sgs(0:im,0:jm,0:km),mode=iomode)
     elseif(trim(turbmode)=='udf1') then
       call h5write(varname='miut',  var=miut(0:im,0:jm,0:km),mode=iomode)
     endif

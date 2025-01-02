@@ -38,6 +38,7 @@ module initialisation
     use statistic,only: nsamples
     use bc,       only: ninflowslice,turbinf
     use userdefine,only: udf_flowinit
+    use smag,      only: src_smag
     !
     call inletprofile
     !
@@ -61,6 +62,8 @@ module initialisation
         if(trim(turbmode)=='k-omega') then
           tke=0.d0
           omg=0.d0
+        elseif(trim(turbmode)=='smag') then
+          call src_smag
         endif
         !
       elseif(ninit==6) then
